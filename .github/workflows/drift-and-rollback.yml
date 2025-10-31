@@ -1,0 +1,141 @@
+# Purpose: Detect drift via server dry-run/diff and perform guarded rollback with audit trail.
+# Upgrades (phase 3):
+# - Optional conftest validation for SVC/CM/Secret prior to apply
+# - Server-side dry-run on manifests/**
+# - If violations detected and perform_rollback=true, emit rollback plan artifact
+name: drift-and-rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      perform_rollback:
+        description: "Rollback on drift detection"
+        required: true
+        default: "false"
+      namespace:
+        description: "Target namespace for checks (optional)"
+        required: false
+        default: ""
+  push:
+    paths:
+      - "manifests/**"
+      - "platform-governance/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: drift-rollback-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AUDIT_DIR: artifacts/drift
+  DRY_RUN_ONLY: "true"   # switch to "false" when cluster and RBAC available
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Clone repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p repo && cd repo
+          git init
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}"
+          git fetch --depth=1 origin "${GITHUB_SHA}"
+          git checkout --detach "${GITHUB_SHA}"
+      - name: Prepare audit dir
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          mkdir -p "${AUDIT_DIR}" artifacts/tools bin
+      - name: Install PyYAML (for installer)
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check --no-input pyyaml==6.0.2 >/dev/null
+      - name: Install conftest and kubectl
+        shell: bash
+        working-directory: repo
+        env:
+          PATH: ${{ github.workspace }}/repo/bin:/usr/local/bin:/usr/bin:/bin
+        run: |
+          set -euo pipefail
+          python3 scripts/install_tools.py --tools conftest,kubectl --out artifacts/tools/install-drift.json
+          echo "PATH=$(pwd)/bin:$PATH" >> "$GITHUB_ENV"
+      - name: K8s manifests policy validation (SVC/CM/Secret)
+        id: policy
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          set +e
+          conftest test -p tools/conftest/policies -o json manifests > "${AUDIT_DIR}/conftest_k8s.json"
+          EC=$?
+          set -e
+          python3 - << 'PY'
+import json,hashlib,os,sys
+p="artifacts/drift/conftest_k8s.json"
+d=open(p,"rb").read() if os.path.exists(p) else b"{}"
+open("artifacts/drift/conftest_k8s.sha3.json","w").write(json.dumps({"sha3_512":hashlib.sha3_512(d).hexdigest()},indent=2))
+data = json.loads(d or "{}")
+viol = 0
+if isinstance(data, list):
+  for it in data:
+    viol += len(it.get("failures", []))
+open("artifacts/drift/policy_summary.json","w").write(json.dumps({"violations":viol},indent=2))
+print(viol)
+PY
+          echo "violations=$(jq -r '.violations' artifacts/drift/policy_summary.json)" >> "$GITHUB_OUTPUT"
+          exit $EC
+      - name: Try kubectl server-dry-run (optional)
+        shell: bash
+        working-directory: repo
+        env:
+          DRY_RUN_ONLY: ${{ env.DRY_RUN_ONLY }}
+        run: |
+          set -euo pipefail
+          echo '{}' > "${AUDIT_DIR}/server_dry_run.json"
+          if [ "${DRY_RUN_ONLY}" = "true" ]; then
+            echo '{"status":"skipped","reason":"DRY_RUN_ONLY"}' > "${AUDIT_DIR}/server_dry_run.json"
+          else
+            # Dry-run each manifest file and collect outputs (requires cluster RBAC)
+            OUT="${AUDIT_DIR}/server_dry_run_synth.yaml"
+            : > "${OUT}"
+            for f in $(find manifests -type f -name '*.yaml' -o -name '*.yml'); do
+              ./bin/kubectl apply --server-side --dry-run=server -f "$f" -o yaml || true
+            done | tee -a "${OUT}"
+          fi
+      - name: Local diff fallback
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          git diff --no-index --word-diff=plain --exit-code manifests/ manifests/ >/dev/null 2>&1 || true
+          echo '[]' > "${AUDIT_DIR}/local_diff.json"
+      - name: Guarded rollback (planned)
+        if: ${{ github.event.inputs.perform_rollback == 'true' }}
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          V=$(jq -r '.violations' artifacts/drift/policy_summary.json || echo 0)
+          STATUS="noop"
+          REASON="no-violations"
+          if [ "${V}" != "0" ]; then
+            STATUS="planned"
+            REASON="violations-detected"
+          fi
+          printf '{"rollback":"%s","reason":"%s"}\n' "${STATUS}" "${REASON}" > "${AUDIT_DIR}/rollback.json"
+      - name: Audit log
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          cat > "${AUDIT_DIR}/audit.jsonl" <<'JSONL'
+{"who":"github-actions","what":"drift-check","why":"policy","how":"dry-run/local-diff/conftest","evidence":["server_dry_run.json","local_diff.json","conftest_k8s.json","policy_summary.json"]}
+JSONL

@@ -1,0 +1,58 @@
+# File purpose: Kyverno validate policy for Service/ConfigMap/Secret naming and labels.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: svc-cm-secret-naming-and-labels
+  annotations:
+    policies.kyverno.io/title: "SVC/CM/Secret Naming & Labels"
+    policies.kyverno.io/description: "Enforce canonical naming and required labels on Service, ConfigMap, Secret."
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: validate-naming
+      match:
+        any:
+        - resources:
+            kinds: ["Service","ConfigMap","Secret"]
+      validate:
+        message: "name must match ^(team|tenant|feature)-[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ and length <= 63"
+        pattern:
+          metadata:
+            name: "?matches(/^(team|tenant|feature)-[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/)"
+    - name: validate-required-labels
+      match:
+        any:
+        - resources:
+            kinds: ["Service","ConfigMap","Secret"]
+      validate:
+        message: "Missing required labels: namespace.io/team, namespace.io/environment, namespace.io/lifecycle, namespace.io/managed-by, namespace.io/contract-ref"
+        pattern:
+          metadata:
+            labels:
+              namespace.io/team: "?*"
+              namespace.io/environment: "?*"
+              namespace.io/lifecycle: "?*"
+              namespace.io/managed-by: "?*"
+              namespace.io/contract-ref: "?*"
+    - name: validate-service-type
+      match:
+        any:
+        - resources:
+            kinds: ["Service"]
+      preconditions:
+        all:
+        - key: "{{ request.object.spec.type || '' }}"
+          operator: AnyIn
+          value: ["", "ClusterIP", "NodePort", "LoadBalancer","ExternalName"]
+      validate:
+        deny:
+          conditions:
+            any:
+            - key: "{{ request.object.spec.type }}"
+              operator: Equals
+              value: "LoadBalancer"
+            - key: "{{ request.object.spec.type }}"
+              operator: Equals
+              value: "NodePort"
+        message: "NodePort/LoadBalancer require exemption.*approved: \"true\""

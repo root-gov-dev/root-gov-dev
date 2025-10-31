@@ -1,0 +1,25 @@
+# File purpose: Template ConfigMap (immutable) with version and integrity placeholders.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: team-platform-api-config
+  labels:
+    namespace.io/team: platform
+    namespace.io/environment: production
+    namespace.io/lifecycle: active
+    namespace.io/managed-by: gitops
+    namespace.io/contract-ref: urn:namespace:contract:core:v1
+  annotations:
+    description: "Runtime configuration (non-secret)"
+    lifecycle.review-date: "2025-12-31"
+    integrity.hashes: '{"sha3_512":"<inject-by-ci>","blake3":"<inject-by-ci>"}'
+    provenance.ref: "git://&lt;repo&gt;@&lt;commit&gt;"
+    config.version: "v1.0.0"
+immutable: true
+data:
+  app.yaml: |
+    server:
+      port: 8080
+    feature_flags:
+      foo: true
+      bar: false

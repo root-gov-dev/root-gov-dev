@@ -1,0 +1,28 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: compliance-auto-remediation
+  namespace: platform-system
+spec:
+  schedule: "*/5 * * * *"  # 每5分鐘掃描一次
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: compliance-remediator
+          containers:
+          - name: remediator
+            image: ghcr.io/secure-baseline/compliance-remediator:1.0.0
+            env:
+            - name: AUTO_FIX_ENABLED
+              value: "true"
+            - name: SEVERITY_THRESHOLD  
+              value: "High"
+            - name: NOTIFICATION_WEBHOOK
+              valueFrom:
+                secretKeyRef:
+                  name: slack-webhook
+                  key: url
+            command: ["/bin/remediate"]
+            args: ["--scan-interval=5m", "--auto-approve-low-risk", "--rollback-on-failure"]
+          restartPolicy: OnFailure

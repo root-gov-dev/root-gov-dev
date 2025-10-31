@@ -1,0 +1,22 @@
+# Purpose: Example real config for render-hints module (should pass schema)
+type: render-hints
+i18n:
+  supported_locales: ["en", "zh-TW"]
+  default_locale: "zh-TW"
+  fallback_locale: "en"
+ui_hints:
+  theme: "system"
+  card:
+    padding: "16px"
+validation_rules:
+  - field: "ticket.id"
+    rule: "required"
+    message_key: "error.required"
+conditional_display:
+  - condition: "status.state == 'approved'"
+    show_fields: ["promoted_at", "promoted_by"]
+accessibility:
+  aria_labels_enabled: true
+  keyboard_navigation: true
+  screen_reader_support: true
+  high_contrast_mode: true

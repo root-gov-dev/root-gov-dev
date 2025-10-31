@@ -1,0 +1,36 @@
+# Purpose: Kyverno validation for naming and required labels on Service/ConfigMap/Secret.
+# Aligns with Conftest rules: naming pattern, <=63 chars, required governance labels.
+
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: naming-and-labels-validation
+spec:
+  validationFailureAction: audit
+  background: true
+  rules:
+    - name: enforce-naming-and-labels
+      match:
+        any:
+          - resources:
+              kinds:
+                - Service
+                - ConfigMap
+                - Secret
+      validate:
+        message: "Resource must follow naming pattern and required labels."
+        pattern:
+          metadata:
+            name: "?*"
+            labels:
+              namespace.io/team: "?*"
+              namespace.io/environment: "?*"
+              namespace.io/lifecycle: "?*"
+              namespace.io/managed-by: "?*"
+              namespace.io/contract-ref: "?*"
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.metadata.name }}"
+                operator: NotMatches
+                value: "^(team|tenant|feature)-[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"

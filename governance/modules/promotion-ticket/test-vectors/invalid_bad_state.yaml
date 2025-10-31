@@ -1,0 +1,24 @@
+# Purpose: Invalid payload to exercise schema rejections (requires + approvals.required)
+name: invalid_bad_state
+valid: false
+payload:
+  type: promotion-ticket
+  id: "ticket-002"
+  version: "1.0.0"
+  owner: "release-team"
+  lifecycle:
+    states: ["requested", "approved"]
+    allowed_transitions:
+      - from: "requested"
+        to: "approved"
+        by: "approver"
+        requires: ["NOT-ALLOWED"]  # invalid enum, should fail
+    current_stage: "requested"
+  approvals:
+    required: 0  # invalid: minimum is 1
+    strategy: "all-must-approve"
+    timeout: "24h"
+  evidence:
+    sbom_uri: "root-evidence/sbom/"
+    attestation_uri: "root-evidence/attestation/"
+    provenance_uri: "root-evidence/provenance/"

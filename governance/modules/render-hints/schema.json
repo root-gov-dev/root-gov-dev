@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/render-hints.schema.json",
+  "title": "Render Hints",
+  "description": "UI hints, i18n, validation rules, conditional display and accessibility toggles for render layer.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["i18n", "accessibility"],
+  "properties": {
+    "type": {
+      "type": "string",
+      "const": "render-hints",
+      "description": "Type discriminator for UI hints."
+    },
+    "i18n": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["supported_locales", "default_locale", "fallback_locale"],
+      "properties": {
+        "supported_locales": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z]{2}(?:-[A-Z]{2})?$"
+          }
+        },
+        "default_locale": {
+          "type": "string",
+          "pattern": "^[a-z]{2}(?:-[A-Z]{2})?$"
+        },
+        "fallback_locale": {
+          "type": "string",
+          "pattern": "^[a-z]{2}(?:-[A-Z]{2})?$"
+        }
+      }
+    },
+    "ui_hints": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Reusable component hints and theme tokens."
+    },
+    "validation_rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["field", "rule", "message_key"],
+        "properties": {
+          "field": { "type": "string", "minLength": 1 },
+          "rule": { "type": "string", "minLength": 1 },
+          "message_key": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "conditional_display": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["condition"],
+        "properties": {
+          "condition": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_\\.\\s\\-\\=\\!\\&\\|\\(\\)><']{1,200}$",
+            "description": "Whitelisted expression charset."
+          },
+          "show_fields": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "hide_actions": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "accessibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "aria_labels_enabled",
+        "keyboard_navigation",
+        "screen_reader_support",
+        "high_contrast_mode"
+      ],
+      "properties": {
+        "aria_labels_enabled": { "type": "boolean" },
+        "keyboard_navigation": { "type": "boolean" },
+        "screen_reader_support": { "type": "boolean" },
+        "high_contrast_mode": { "type": "boolean" }
+      }
+    }
+  }
+}

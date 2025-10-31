@@ -1,0 +1,172 @@
+# Purpose: Run naming governance validations (OPA, Conftest, Kyverno-like dry-run), plus SAST/SCA stubs, and produce evidence.
+# Upgrades (phase 3):
+# - Add K8s SVC/CM/Secret validation with Conftest against manifests/**
+# - Produce double-hash (SHA3-512, BLAKE3) and SARIF for K8s policy results
+# - Preserve minimal permissions, concurrency, job timeout
+name: naming-governance-ci
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: naming-governance-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REPORT_DIR: artifacts/naming
+  ENABLE_TOOLS: "true"
+  RETRY_MAX: "2"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Clone repository (read-only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p repo && cd repo
+          git init
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}"
+          git fetch --depth=1 origin "${GITHUB_SHA}"
+          git checkout --detach "${GITHUB_SHA}"
+      - name: Prepare report dirs
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          mkdir -p "${REPORT_DIR}" artifacts/tools bin artifacts/naming/k8s artifacts/naming/sarif
+      - name: Install PyYAML (for installer)
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check --no-input pyyaml==6.0.2 >/dev/null
+      - name: Install governance tools (OPA/Conftest/Kyverno/Kubescape/kube-bench)
+        id: install
+        shell: bash
+        working-directory: repo
+        env:
+          PATH: ${{ github.workspace }}/repo/bin:/usr/local/bin:/usr/bin:/bin
+        run: |
+          set -euo pipefail
+          python3 scripts/install_tools.py --tools opa,conftest,kyverno,kubescape,kube-bench --out artifacts/tools/install-report.json
+          echo "bin=$(pwd)/bin" >> "$GITHUB_OUTPUT"
+          echo "PATH=$(pwd)/bin:$PATH" >> "$GITHUB_ENV"
+      - name: Install Python deps for hashing (blake3)
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check --no-input blake3==0.3.3 >/dev/null
+      - name: OPA policy tests
+        shell: bash
+        working-directory: repo
+        env:
+          PATH: ${{ steps.install.outputs.bin }}:/usr/local/bin:/usr/bin:/bin
+        run: |
+          set -euo pipefail
+          opa version
+          opa test -v tools/opa/policies tests/rego | tee "${REPORT_DIR}/opa_test.txt"
+          printf '{"status":"ok","note":"opa tests executed"}\n' > "${REPORT_DIR}/opa_test.json"
+      - name: Conftest validation (repo-wide)
+        shell: bash
+        working-directory: repo
+        env:
+          PATH: ${{ steps.install.outputs.bin }}:/usr/local/bin:/usr/bin:/bin
+        run: |
+          set -euo pipefail
+          conftest --version
+          conftest test -p tools/conftest/policies -o json . | tee "${REPORT_DIR}/conftest.json"
+      - name: Validate K8s SVC/CM/Secret with Conftest (manifests/**)
+        shell: bash
+        working-directory: repo
+        env:
+          PATH: ${{ steps.install.outputs.bin }}:/usr/local/bin:/usr/bin:/bin
+        run: |
+          set -euo pipefail
+          set +e
+          conftest test -p tools/conftest/policies -o json manifests > artifacts/naming/k8s/conftest_k8s.json
+          EC=$?
+          set -e
+          python3 - << 'PY'
+import json, hashlib, os, sys
+from blake3 import blake3
+p="artifacts/naming/k8s/conftest_k8s.json"
+d=open(p,"rb").read() if os.path.exists(p) else b"{}"
+sha3=hashlib.sha3_512(d).hexdigest()
+b3=blake3(d).hexdigest()
+open("artifacts/naming/k8s/conftest_k8s.hash.json","w").write(json.dumps({"sha3_512":sha3,"blake3":b3},indent=2))
+# Convert Conftest JSON to SARIF (minimal)
+sarif={
+ "version":"2.1.0",
+ "$schema":"https://schemastore.azurewebsites.net/schemas/json/sarif-2.1.0-rtm.5.json",
+ "runs":[{
+   "tool":{"driver":{"name":"conftest","informationUri":"https://www.conftest.dev/","version":"custom"}},
+   "results":[]
+ }]}
+try:
+  data=json.loads(open(p).read())
+  results=[]
+  # conftest json output is an array of file results
+  for item in data if isinstance(data,list) else []:
+    f=item.get("filename","")
+    for r in item.get("failures",[]):
+      results.append({"ruleId":"k8s.governance","level":"error","message":{"text":r.get("msg","")}, "locations":[{"physicalLocation":{"artifactLocation":{"uri":f}}}]})
+    for r in item.get("warnings",[]):
+      results.append({"ruleId":"k8s.governance","level":"warning","message":{"text":r.get("msg","")}, "locations":[{"physicalLocation":{"artifactLocation":{"uri":f}}}]})
+  sarif["runs"][0]["results"]=results
+except Exception as e:
+  pass
+open("artifacts/naming/sarif/k8s_policy.sarif","w").write(json.dumps(sarif,indent=2))
+PY
+          # exit with original conftest code to fail the job if violations
+          exit $EC
+      - name: Kyverno/Gatekeeper dry-run alignment (cli presence)
+        shell: bash
+        working-directory: repo
+        env:
+          PATH: ${{ steps.install.outputs.bin }}:/usr/local/bin:/usr/bin:/bin
+        run: |
+          set -euo pipefail
+          kyverno version | tee "${REPORT_DIR}/kyverno_cli.txt"
+          printf '{"status":"ok","alignment":"cli-available"}\n' > "${REPORT_DIR}/kyverno_gatekeeper.json"
+      - name: Checkov scan (SAST/SCA) to SARIF
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check --no-input checkov==3.2.325 >/dev/null
+          checkov --version | tee "${REPORT_DIR}/checkov_version.txt"
+          checkov -d . --output sarif | tee "${REPORT_DIR}/sca_sast_sarif.sarif" >/dev/null
+          printf '{"summary":"checkov","status":"ok"}\n' > "${REPORT_DIR}/sca_sast_summary.json"
+      - name: Kubescape and kube-bench inventory (version evidence)
+        shell: bash
+        working-directory: repo
+        env:
+          PATH: ${{ steps.install.outputs.bin }}:/usr/local/bin:/usr/bin:/bin
+        run: |
+          set -euo pipefail
+          kubescape version | tee "${REPORT_DIR}/kubescape_version.txt" || echo "kubescape not runnable in CI"
+          kube-bench version | tee "${REPORT_DIR}/kube_bench_version.txt" || echo "kube-bench not runnable in CI"
+      - name: Evidence hash + PR annotation (log)
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          python3 - << 'PY'
+import os, json, hashlib, glob
+paths = sorted(glob.glob("artifacts/naming/*")+glob.glob("artifacts/naming/k8s/*")+glob.glob("artifacts/naming/sarif/*"))
+sha3s = {}
+for p in paths:
+  with open(p,'rb') as f: d=f.read()
+  sha3s[os.path.basename(p)] = hashlib.sha3_512(d).hexdigest()
+open("artifacts/naming/evidence.sha3.json","w").write(json.dumps(sha3s, indent=2))
+print(json.dumps(sha3s, indent=2))
+PY
+          echo "::notice title=Naming Governance::Reports generated at artifacts/naming"

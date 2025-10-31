@@ -1,0 +1,30 @@
+# Purpose: Example real config for promotion-ticket module (should pass schema)
+type: promotion-ticket
+id: "release-2025-10-31"
+version: "1.0.0"
+owner: "governance"
+policy_refs:
+  - "tools/conftest/policies"
+lifecycle:
+  states: ["requested", "approved", "promoted", "rejected", "archived"]
+  allowed_transitions:
+    - from: "requested"
+      to: "approved"
+      by: "approver"
+      requires: ["policy-gate-passed", "sbom-validated"]
+  current_stage: "requested"
+approvals:
+  required: 2
+  strategy: "all-must-approve"
+  timeout: "24h"
+  escalation:
+    enabled: true
+    escalate_to: ["cto@company.com"]
+    after_hours: 24
+evidence:
+  sbom_uri: "root-evidence/provenance/rag-provenance/sbom/"
+  attestation_uri: "root-evidence/attestation/"
+  provenance_uri: "root-evidence/provenance/"
+  signatures:
+    - signer: "promotion-service@sigstore.dev"
+      transparency_log: "https://rekor.sigstore.dev/"

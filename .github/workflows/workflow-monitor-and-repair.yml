@@ -1,0 +1,202 @@
+# Purpose: Monitor and repair GitHub workflows in-repo with minimal permissions, concurrency, retry wrapper, and job-level timeout.  
+# Notes:  
+# - No external GitHub Actions are used to avoid unpinned SHA issues.  
+# - Repo checkout is performed via git clone with GITHUB_TOKEN and contents: read.  
+# - If fixes are needed, a separate job escalates to minimal required permissions to open a PR.  
+# - Double-hash evidence uses Python's hashlib (sha3_512) + pip blake3.  
+# - For production, consider moving artifacts to persisted storage (e.g., upload-artifact with pinned @SHA).  
+name: workflow-monitor-and-repair
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/**"
+  schedule:
+    - cron: "27 2 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: monitor-and-repair-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REPO_URL: https://github.com/${{ github.repository }}
+  DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
+  SAFE_EMAIL: "bot@example.com"
+  SAFE_NAME: "workflow-repair-bot"
+  PR_TITLE: "chore(ci): auto repair workflows (lint, harden, pin placeholders)"
+  PR_BODY_PATH: outputs/auto-fix-report.md
+  REPORT_DIR: outputs
+  RETRY_MAX: "3"
+
+jobs:
+  detect:
+    name: Detect and prepare patch
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Prepare workspace and clone (read-only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p repo
+          cd repo
+          git init
+          git config --global advice.detachedHead false
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}"
+          git fetch --depth=1 origin "${GITHUB_SHA}"
+          git checkout --detach "${GITHUB_SHA}"
+          git status
+      - name: Run workflow linter and auto-fix suggester
+        shell: bash
+        working-directory: repo
+        env:
+          REPORT_DIR: ${{ env.REPORT_DIR }}
+          RETRY_MAX: ${{ env.RETRY_MAX }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${REPORT_DIR}"
+          chmod +x scripts/workflow_repair.sh || true
+          # Retry wrapper
+          n=0
+          until [ $n -ge "${RETRY_MAX}" ]; do
+            if bash scripts/workflow_repair.sh --scan --patch-out "${REPORT_DIR}/patch.diff" \
+                --report-json "${REPORT_DIR}/auto-fix-report.json" \
+                --report-md "${REPORT_DIR}/auto-fix-report.md"; then
+              break
+            fi
+            n=$((n+1)); echo "retry $n/${RETRY_MAX}..."; sleep 2
+          done
+          test -f "${REPORT_DIR}/auto-fix-report.json" || (echo "report not generated" && exit 1)
+      - name: Compute double hash (SHA3-512 + BLAKE3)
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          python3 - << 'PY'
+import json, hashlib, sys, os, subprocess
+p = "outputs/auto-fix-report.json"
+if not os.path.exists(p):
+  print("report missing", file=sys.stderr); sys.exit(1)
+data = open(p,'rb').read()
+sha3 = hashlib.sha3_512(data).hexdigest()
+print(f"sha3_512={sha3}")
+try:
+  import blake3
+except Exception:
+  # Pin version; integrity validation can be added later
+  subprocess.check_call([sys.executable, "-m", "pip", "install", "blake3==0.3.3", "--disable-pip-version-check", "--no-input"])
+  import blake3
+b3 = blake3.blake3(data).hexdigest()
+print(f"blake3={b3}")
+meta = {"sha3_512": sha3, "blake3": b3}
+open("outputs/auto-fix-report.hash.json","w").write(json.dumps(meta, indent=2))
+PY
+      - name: Decide if PR is needed
+        id: decide
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          if [ -s "outputs/patch.diff" ]; then
+            echo "needs_fix=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_fix=false" >> "$GITHUB_OUTPUT"
+          fi
+    outputs:
+      needs_fix: ${{ steps.decide.outputs.needs_fix }}
+
+  open_pr:
+    name: Open signed PR with patch and report
+    needs: detect
+    if: needs.detect.outputs.needs_fix == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Clone default branch (write)
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global user.email "${SAFE_EMAIL}"
+          git config --global user.name "${SAFE_NAME}"
+          git init repo && cd repo
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}"
+          git fetch origin "${DEFAULT_BRANCH}"
+          git checkout -b "auto/fix-workflows-$(date +%Y%m%d-%H%M%S)" "origin/${DEFAULT_BRANCH}"
+      - name: Re-run linter to regenerate patch on base
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          mkdir -p outputs
+          chmod +x scripts/workflow_repair.sh || true
+          bash scripts/workflow_repair.sh --scan --patch-out outputs/patch.diff --report-json outputs/auto-fix-report.json --report-md outputs/auto-fix-report.md
+      - name: Apply patch
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          if [ ! -s outputs/patch.diff ]; then
+            echo "No patch to apply"; exit 0
+          fi
+          git apply --index outputs/patch.diff || (echo "git apply failed"; exit 1)
+          git status --porcelain
+      - name: Commit changes with signoff and trailers
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          if git diff --cached --quiet; then
+            echo "Nothing to commit"
+            exit 0
+          fi
+          # Compute double hash again to embed into commit trailers
+          python3 - << 'PY'
+import json, hashlib, sys, os, subprocess
+p = "outputs/auto-fix-report.json"
+data = open(p,'rb').read()
+sha3 = hashlib.sha3_512(data).hexdigest()
+try:
+  import blake3
+except Exception:
+  subprocess.check_call([sys.executable, "-m", "pip", "install", "blake3==0.3.3", "--disable-pip-version-check", "--no-input"])
+  import blake3
+b3 = blake3.blake3(data).hexdigest()
+open("outputs/auto-fix-report.hash.json","w").write(json.dumps({"sha3_512": sha3, "blake3": b3}, indent=2))
+print(sha3, b3)
+PY
+          SHA3=$(jq -r '.sha3_512' outputs/auto-fix-report.hash.json)
+          B3=$(jq -r '.blake3' outputs/auto-fix-report.hash.json)
+          git add -A
+          git commit -s -m "${PR_TITLE}" -m "Evidence-Hash-SHA3-512: ${SHA3}" -m "Evidence-Hash-BLAKE3: ${B3}" -m "Audit-Log: outputs/auto-fix-report.json"
+      - name: Push branch
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          git push --set-upstream origin "$(git branch --show-current)"
+      - name: Open PR via REST API
+        shell: bash
+        working-directory: repo
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          BRANCH=$(git branch --show-current)
+          BODY=$(cat outputs/auto-fix-report.md | sed 's/"/\\"/g' | sed "s/'/\\'/g")
+          jq -n --arg title "${PR_TITLE}" \
+                --arg head "${BRANCH}" \
+                --arg base "${DEFAULT_BRANCH}" \
+                --arg body "${BODY}" \
+                '{title:$title, head:$head, base:$base, body:$body, maintainer_can_modify:true, draft:false}' > pr.json
+          curl -sSf -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/pulls" \
+            -d @pr.json | tee pr.response.json

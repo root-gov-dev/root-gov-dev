@@ -1,0 +1,44 @@
+# Purpose: Centralized policy data for naming, governance, and ExternalName rules (OPA/Conftest data source).
+# Notes:
+# - This file is loaded by OPA as data.policy_data (file name uses underscore to allow import).
+# - Teams can tune patterns/allowlists without changing Rego logic.
+
+naming:
+  namespace:
+    pattern: "^(team|tenant|feature)-[a-z0-9-]+$"
+    maxLength: 63
+    requiredLabels:
+      - "namespace.io/team"
+      - "namespace.io/environment"
+      - "namespace.io/lifecycle"
+      - "namespace.io/managed-by"
+    allowedPrefixes:
+      - "team-"
+      - "tenant-"
+      - "feature-"
+  service:
+    maxLength: 63
+    pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])$"
+    requiredLabels:
+      - "namespace.io/domain"
+      - "namespace.io/lifecycle"
+
+governance:
+  lifecycleStates:
+    - "active"
+    - "deprecated"
+    - "archived"
+  environment:
+    - "production"
+    - "staging"
+    - "development"
+
+externalName:
+  allowlist:
+    - "db.internal.svc.cluster.local"
+    - "api.partner.example.com"
+  rules:
+    wildcard: false
+    bareDomain: false
+    maxLength: 253
+    requireFQDN: true
