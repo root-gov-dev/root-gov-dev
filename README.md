@@ -79,13 +79,17 @@ Intelligent Module Analysis Engine | 模組智能分析引擎:
 
 **Security Check Process | 安全檢查流程**
 ```mermaid
-graph LR
-  A[Code Commit – 代碼提交] --> B[SBOM Generate – 生成 SBOM]
+flowchart TD
+  Z[Semantic Intent – 語意驅動生成] --> A[Code Commit – 代碼提交]
+  A --> B[SBOM Generate – 生成 SBOM]
   B --> C[SBOM Validate – 驗證 SBOM]
   C --> D[Governance Inject – 治理注入]
-  D --> E[CI/CD Trigger – 觸發 CI/CD]
+  D --> H[Module Inherited – 模組繼承]
+  H --> E[CI/CD Trigger – 觸發 CI/CD]
   E --> F[Module Observed – 模組觀測]
   F --> G[Version Evolve – 模組演化]
+  G --> I[SBOM Diff – 差異比對]
+  I --> Z
 ```
 
 ### Semantic Version Control Strategy | 語意化版本控制策略
