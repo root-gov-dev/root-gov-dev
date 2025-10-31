@@ -15,89 +15,169 @@ jobs:
       SYFT_VERSION: 1.17.0
       GRYPE_VERSION: 0.76.3
       COSIGN_VERSION: 2.2.4
-      ALLOW_AUTO_FIX: "true"         # 設 true 可嘗試自動修復
-      SEVERITY_BLOCK: "High,Critical" # 阻擋等級
+      ALLOW_AUTO_FIX: "true"
+      SEVERITY_BLOCK: "High,Critical"
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup tools (syft, grype, cosign, jq)
         run: |
-          sudo apt-get update && sudo apt-get install -y wget jq
-          wget -qO- https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz | tar -xz && sudo mv syft /usr/local/bin/
-          wget -qO- https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/grype_${GRYPE_VERSION}_linux_amd64.tar.gz | tar -xz && sudo mv grype /usr/local/bin/
-          wget -qO cosign https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64 && chmod +x cosign && sudo mv cosign /usr/local/bin/
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget jq tar
+          TMPDIR=$(mktemp -d)
+          echo "Downloading syft..."
+          SYFT_URL="https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz"
+          wget -q -O "${TMPDIR}/syft.tar.gz" "${SYFT_URL}"
+          tar -xzf "${TMPDIR}/syft.tar.gz" -C "${TMPDIR}" || { echo "syft tar extract failed"; ls -al "${TMPDIR}"; exit 1; }
+          if [ -f "${TMPDIR}/syft" ]; then
+            sudo mv "${TMPDIR}/syft" /usr/local/bin/syft
+          else
+            BIN=$(find "${TMPDIR}" -type f -name syft -perm /u=x | head -n1 || true)
+            if [ -n "$BIN" ]; then sudo mv "$BIN" /usr/local/bin/syft; else echo "Syft binary not found" >&2; ls -al "${TMPDIR}"; exit 1; fi
+          fi
+
+          echo "Downloading grype..."
+          GRYPE_URL="https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/grype_${GRYPE_VERSION}_linux_amd64.tar.gz"
+          wget -q -O "${TMPDIR}/grype.tar.gz" "${GRYPE_URL}"
+          tar -xzf "${TMPDIR}/grype.tar.gz" -C "${TMPDIR}" || { echo "grype tar extract failed"; ls -al "${TMPDIR}"; exit 1; }
+          BIN=$(find "${TMPDIR}" -type f -name grype -perm /u=x | head -n1 || true)
+          if [ -n "$BIN" ]; then sudo mv "$BIN" /usr/local/bin/grype; else echo "Grype binary not found" >&2; ls -al "${TMPDIR}"; exit 1; fi
+
+          echo "Downloading cosign..."
+          COSIGN_URL="https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
+          wget -q -O "${TMPDIR}/cosign" "${COSIGN_URL}"
+          chmod +x "${TMPDIR}/cosign"
+          sudo mv "${TMPDIR}/cosign" /usr/local/bin/cosign
+
+          rm -rf "${TMPDIR}"
+          echo "Installed tools versions:"
+          syft --version || true
+          grype --version || true
+          cosign version || true
 
       - name: Enumerate images from manifests
         run: |
+          set -euo pipefail
           mkdir -p .out images
-          # 解析 manifests 中的 image:tag（簡易版；可替換為 yq 更精確）
           grep -RhoE 'image:\s*[a-zA-Z0-9./:_-]+' manifests | awk '{print $2}' | sort -u > .out/images.txt
           echo "Images found:"
           cat .out/images.txt
 
       - name: Generate SBOM (CycloneDX) for each image
         run: |
+          set -euo pipefail
           mkdir -p sbom
           while read -r IMG; do
             SAFE=$(echo "$IMG" | tr '/:@' '____')
-            syft "$IMG" -o cyclonedx-json > "sbom/${SAFE}.sbom.cdx.json" || true
-          done
+            echo "Generating SBOM for $IMG -> sbom/${SAFE}.sbom.cdx.json"
+            # allow syft to fail per image but log it
+            if ! syft "$IMG" -o cyclonedx-json > "sbom/${SAFE}.sbom.cdx.json" 2> "sbom/${SAFE}.syft.log"; then
+              echo "syft failed for $IMG; see sbom/${SAFE}.syft.log"
+            fi
+          done < .out/images.txt
           ls -al sbom || true
+
+      - name: Validate SBOMs generated
+        run: |
+          set -euo pipefail
+          missing=0
+          while read -r IMG; do
+            SAFE=$(echo "$IMG" | tr '/:@' '____')
+            if [ ! -s "sbom/${SAFE}.sbom.cdx.json" ]; then
+              echo "Missing SBOM: sbom/${SAFE}.sbom.cdx.json for image $IMG"
+              missing=1
+            fi
+          done < .out/images.txt
+          if [ "$missing" -ne 0 ]; then
+            echo "SBOM generation incomplete; failing fast for visibility" >&2
+            exit 1
+          fi
 
       - name: Vulnerability scan (Grype) and gate
         run: |
+          set -euo pipefail
           mkdir -p scan
           BLOCK_SET="$(echo "${SEVERITY_BLOCK}" | tr ',' ' ')"
           FAIL=0
           while read -r IMG; do
             SAFE=$(echo "$IMG" | tr '/:@' '____')
-            grype "$IMG" -o json > "scan/${SAFE}.grype.json" || true
-            HITS=$(jq --argjson levels '["High","Critical"]' '
-              [.matches[] | select(.vulnerability.severity as $s | ($levels|index($s)!=null))] | length
-            ' "scan/${SAFE}.grype.json" 2>/dev/null || echo 0)
+            echo "Scanning $IMG -> scan/${SAFE}.grype.json"
+            grype "$IMG" -o json > "scan/${SAFE}.grype.json" 2> "scan/${SAFE}.grype.log" || true
+            SCANFILE="scan/${SAFE}.grype.json"
+            if [ -f "$SCANFILE" ]; then
+              HITS=$(jq --argjson levels '["High","Critical"]' '[.matches[] | select(.vulnerability.severity as $s | ($levels|index($s)!=null))] | length' "$SCANFILE" 2>/dev/null || echo 0)
+            else
+              HITS=0
+            fi
             echo "Image=$IMG high/critical findings=$HITS"
             if [ "$HITS" -gt 0 ]; then FAIL=1; fi
-          done
+          done < .out/images.txt
           echo "BLOCK status=$FAIL"
           echo "$FAIL" > .out/block_status.txt
 
       - name: Attempt auto fix (replace image, add signature, attach attestations)
         if: env.ALLOW_AUTO_FIX == 'true'
         run: |
+          set -euo pipefail
           bash supplychain/scripts/auto_fix.sh .out/images.txt manifests supplychain/config/tools.yaml || true
 
       - name: Re-scan after auto fix
         if: env.ALLOW_AUTO_FIX == 'true'
         run: |
-          # 重新 enumerate 以防 auto fix 改了 manifests
+          set -euo pipefail
           grep -RhoE 'image:\s*[a-zA-Z0-9./:_-]+' manifests | awk '{print $2}' | sort -u > .out/images_fixed.txt
           mkdir -p scan_fixed
           FAIL=0
           while read -r IMG; do
             SAFE=$(echo "$IMG" | tr '/:@' '____')
-            grype "$IMG" -o json > "scan_fixed/${SAFE}.json" || true
-            HITS=$(jq --argjson levels '["High","Critical"]' '
-              [.matches[] | select(.vulnerability.severity as $s | ($levels|index($s)!=null))] | length
-            ' "scan_fixed/${SAFE}.json" 2>/dev/null || echo 0)
+            echo "Re-scanning $IMG -> scan_fixed/${SAFE}.json"
+            grype "$IMG" -o json > "scan_fixed/${SAFE}.json" 2> "scan_fixed/${SAFE}.grype.log" || true
+            SCANFILE="scan_fixed/${SAFE}.json"
+            if [ -f "$SCANFILE" ]; then
+              HITS=$(jq --argjson levels '["High","Critical"]' '[.matches[] | select(.vulnerability.severity as $s | ($levels|index($s)!=null))] | length' "$SCANFILE" 2>/dev/null || echo 0)
+            else
+              HITS=0
+            fi
             echo "Image=$IMG high/critical findings(after-fix)=$HITS"
             if [ "$HITS" -gt 0 ]; then FAIL=1; fi
-          done
+          done < .out/images_fixed.txt
           echo "$FAIL" > .out/block_status_fixed.txt
+
+      - name: Login to registries (optional)
+        uses: docker/login-action@v2
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME || '' }}
+          password: ${{ secrets.DOCKERHUB_TOKEN || '' }}
 
       - name: Sign images (cosign) and produce attestations
         run: |
+          set -euo pipefail
           mkdir -p attest
+          if [ ! -f .out/images.txt ]; then echo ".out/images.txt not found" >&2; exit 1; fi
           while read -r IMG; do
-            # 使用 keyless（OIDC）或設定好 KMS；示例用 keyless 模式
-            set +e
-            cosign sign --yes "$IMG" || true
-            cosign attest --yes --predicate sbom/predicate.json --type cyclonedx "$IMG" || true
+            echo "Processing sign/attest for $IMG"
+            # sign; allow failure but log
+            if cosign sign --yes "$IMG"; then
+              echo "cosign sign succeeded for $IMG"
+            else
+              echo "cosign sign failed for $IMG; continuing to next image"
+            fi
+            if [ -f "sbom/predicate.json" ]; then
+              if cosign attest --yes --predicate sbom/predicate.json --type cyclonedx "$IMG"; then
+                echo "cosign attest succeeded for $IMG"
+              else
+                echo "cosign attest failed for $IMG"
+              fi
+            else
+              echo "sbom/predicate.json not found; skipping cosign attest for $IMG"
+            fi
           done < .out/images.txt
 
       - name: Policy verification (OPA/Rego)
         run: |
-          # 確保每張 image 有 SBOM、有簽章、有 attestation；且掃描高危數量為 0
-          # 這裡用簡化的 shell + jq 驗證；亦可用 conftest + rego
+          set -euo pipefail
           TOTAL=0; FAIL=0
           while read -r IMG; do
             TOTAL=$((TOTAL+1))
@@ -105,9 +185,11 @@ jobs:
             SBOM_OK=$(test -s "sbom/${SAFE}.sbom.cdx.json" && echo ok || echo ng)
             SCAN_FILE="scan_fixed/${SAFE}.json"
             [ -f "$SCAN_FILE" ] || SCAN_FILE="scan/${SAFE}.grype.json"
-            HITS=$(jq --argjson levels '["High","Critical"]' '
-              [.matches[] | select(.vulnerability.severity as $s | ($levels|index($s)!=null))] | length
-            ' "$SCAN_FILE" 2>/dev/null || echo 0)
+            if [ -f "$SCAN_FILE" ]; then
+              HITS=$(jq --argjson levels '["High","Critical"]' '[.matches[] | select(.vulnerability.severity as $s | ($levels|index($s)!=null))] | length' "$SCAN_FILE" 2>/dev/null || echo 0)
+            else
+              HITS=0
+            fi
             echo "Verify: IMG=$IMG SBOM=$SBOM_OK High/Critical=$HITS"
             if [ "$SBOM_OK" = "ng" ] || [ "$HITS" -gt 0 ]; then
               FAIL=$((FAIL+1))
