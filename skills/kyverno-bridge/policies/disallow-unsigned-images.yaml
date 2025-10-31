@@ -1,0 +1,24 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-unsigned-images
+spec:
+  validationFailureAction: Audit
+  rules:
+    - name: verify-image-signatures
+      match:
+        any:
+          - resources:
+              kinds: ["Pod","Deployment","StatefulSet","DaemonSet","Job","CronJob"]
+      verifyImages:
+        - imageReferences:
+            - "*"
+          attestations:
+            - predicateType: "https://cyclonedx.org/schema"
+              conditions:
+                all:
+                  - key: "{{ request.object.metadata.labels.\"sbom.available\" }}"
+                    operator: Equals
+                    value: "true"
+          verifyDigest: true
+          required: true

@@ -1,0 +1,315 @@
+# AI 架构师系统 Kubernetes 部署清单
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-architect
+  labels:
+    app: ai-architect
+    version: v1.0.0
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: ai-architect
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: ai-architect
+        version: v1.0.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: ai-architect-sa
+      containers:
+      - name: ai-architect
+        image: ai-architect:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        - name: metrics
+          containerPort: 9090
+          protocol: TCP
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: GOVERNANCE_STRICT_MODE
+          value: "true"
+        - name: SEMANTIC_PARSER_ENABLED
+          value: "true"
+        - name: MODULE_GENERATION_ENABLED
+          value: "true"
+        - name: EVOLUTION_ENGINE_ENABLED
+          value: "true"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: ai-architect-secrets
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: ai-architect-secrets
+              key: redis-url
+        - name: LOG_LEVEL
+          value: "info"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /live
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 10
+        volumeMounts:
+        - name: config
+          mountPath: /config
+          readOnly: true
+        - name: templates
+          mountPath: /templates
+          readOnly: true
+        - name: logs
+          mountPath: /app/logs
+        - name: generated
+          mountPath: /generated
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+      volumes:
+      - name: config
+        configMap:
+          name: ai-architect-config
+      - name: templates
+        persistentVolumeClaim:
+          claimName: templates-pvc
+      - name: logs
+        emptyDir: {}
+      - name: generated
+        emptyDir: {}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - ai-architect
+              topologyKey: kubernetes.io/hostname
+      tolerations:
+      - key: "node-type"
+        operator: "Equal"
+        value: "ai-workload"
+        effect: "NoSchedule"
+
+---
+# 水平 Pod 自动扩缩容
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ai-architect-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ai-architect
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Pods
+        value: 2
+        periodSeconds: 30
+      - type: Percent
+        value: 50
+        periodSeconds: 30
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Pods
+        value: 1
+        periodSeconds: 60
+
+---
+# 服务网格配置 (可选)
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: ai-architect-vs
+spec:
+  hosts:
+  - "ai-architect.example.com"
+  gateways:
+  - ai-architect-gateway
+  http:
+  - match:
+    - uri:
+        prefix: /api/
+    route:
+    - destination:
+        host: ai-architect-service
+        port:
+          number: 8080
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+    corsPolicy:
+      allowOrigins:
+      - exact: "https://app.ai-architect.com"
+      allowMethods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - OPTIONS
+      allowHeaders:
+      - authorization
+      - content-type
+  - match:
+    - uri:
+        prefix: /health
+    route:
+    - destination:
+        host: ai-architect-service
+        port:
+          number: 8080
+
+---
+# 网络策略
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ai-architect-network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: ai-architect
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress
+    ports:
+    - protocol: TCP
+      port: 8080
+    - protocol: TCP
+      port: 9090
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9090
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: database
+    ports:
+    - protocol: TCP
+      port: 5432
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: cache
+    ports:
+    - protocol: TCP
+      port: 6379
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9093
+
+---
+# Pod 中断预算
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ai-architect-pdb
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: ai-architect
+
+---
+# 服务监控
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ai-architect-monitor
+  labels:
+    app: ai-architect
+spec:
+  selector:
+    matchLabels:
+      app: ai-architect
+  endpoints:
+  - port: metrics
+    interval: 15s
+    path: /metrics
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      targetLabel: pod
+    - sourceLabels: [__meta_kubernetes_namespace]
+      targetLabel: namespace

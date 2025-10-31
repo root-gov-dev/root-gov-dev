@@ -1,0 +1,29 @@
+# Purpose: Kyverno mutate policy to inject safe default labels without overriding existing labels.
+# Notes:
+# - Sets app.kubernetes.io/managed-by to kyverno
+# - Fills part-of/version/component with sensible defaults by resource kind.
+
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: add-default-labels
+spec:
+  validationFailureAction: audit
+  rules:
+    - name: add-default-labels
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+                - Service
+                - ConfigMap
+                - Secret
+      mutate:
+        patchStrategicMerge:
+          metadata:
+            labels:
+              +(app.kubernetes.io/managed-by): "kyverno"
+              +(app.kubernetes.io/part-of): "{{ request.object.metadata.labels.\"app.kubernetes.io/part-of\" || 'platform' }}"
+              +(app.kubernetes.io/version): "{{ request.object.metadata.labels.\"app.kubernetes.io/version\" || 'v0' }}"
+              +(app.kubernetes.io/component): "{{ request.object.kind == 'Service' ? 'service' : (request.object.kind == 'ConfigMap' ? 'config' : (request.object.kind == 'Secret' ? 'secret' : 'workload')) }}"

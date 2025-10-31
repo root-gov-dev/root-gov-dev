@@ -1,0 +1,221 @@
+# AI 架构师系统部署配置
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-architect-config
+  labels:
+    app: ai-architect
+    version: v1.0.0
+data:
+  # 核心引擎配置
+  semantic-parser.yaml: |
+    nlp:
+      model: "gpt-4-turbo"
+      temperature: 0.1
+      contextWindow: 32000
+      maxTokens: 4000
+    
+    intentRecognition:
+      confidence: 0.85
+      fallbackStrategy: "clarify"
+      supportedIntents:
+        - "create-module"
+        - "evolve-module" 
+        - "refactor-code"
+        - "generate-docs"
+        - "validate-governance"
+    
+    architectureUnderstanding:
+      enabled: true
+      dependencyAnalysis: true
+      patternDetection: true
+      antiPatternDetection: true
+    
+  # 模块生成配置  
+  module-generator.yaml: |
+    templates:
+      basePath: "/templates"
+      customPath: "/custom-templates"
+      cacheEnabled: true
+      cacheTTL: "1h"
+    
+    generators:
+      validator:
+        defaultSchema: "zod"
+        supportedSchemas: ["zod", "joi", "ajv"]
+        sbomIntegration: true
+        
+      writer:
+        defaultLanguage: "typescript"
+        supportedLanguages: ["typescript", "javascript", "python"]
+        componentTypes: ["hook", "context", "component", "util"]
+        
+      visual:
+        chartLibraries: ["recharts", "d3", "chart.js"]
+        responsiveDesign: true
+        accessibility: true
+        
+      ci:
+        platforms: ["github-actions", "gitlab-ci", "jenkins"]
+        securityScans: true
+        performanceTests: true
+    
+    governance:
+      enforceByDefault: true
+      complianceProfiles: ["GDPR", "SOX", "HIPAA", "PCI-DSS"]
+      qualityGates:
+        testCoverage: 80
+        securityScore: 90
+        performanceScore: 85
+    
+    sbom:
+      format: "spdx-json"
+      includeDevDependencies: false
+      vulnerabilityScan: true
+      licenseCheck: true
+      
+  # 治理配置
+  governance-engine.yaml: |
+    globalRules:
+      dataPrivacy: "strict"
+      auditTrail: "comprehensive"
+      performanceMonitoring: "enabled"
+      securityScanning: "continuous"
+    
+    compliance:
+      autoCheck: true
+      reportingFrequency: "daily"
+      escalationRules:
+        - severity: "critical"
+          notify: ["security-team", "cto"]
+        - severity: "high" 
+          notify: ["team-lead"]
+    
+    qualityGates:
+      codeQuality:
+        minScore: 80
+        requiredChecks: ["typescript", "eslint", "security"]
+      security:
+        maxVulnerabilities: 0
+        maxSecrets: 0
+      performance:
+        maxBundleSize: "500KB"
+        maxRenderTime: "100ms"
+    
+    evidenceRequirements:
+      schemaValidation: "required"
+      testCoverage: "required"
+      securityScan: "required"
+      performanceBenchmark: "optional"
+      accessibilityAudit: "optional"
+      
+  # 协调引擎配置
+  orchestrator-config.yaml: |
+    multiModule:
+      dependencyResolution: "auto"
+      conflictDetection: "strict"
+      rollbackStrategy: "auto"
+    
+    lifecycle:
+      deployment: "blue-green"
+      scaling: "auto"
+      monitoring: "prometheus"
+      backup: "daily"
+    
+    interactionPatterns:
+      - "event-driven"
+      - "api-gateway"
+      - "service-mesh"
+    
+    governanceInheritance:
+      parentRules: ["security", "compliance", "audit"]
+      overridable: ["performance", "ui-ux", "documentation"]
+      mandatory: ["security", "data-protection"]
+      
+  # 演化引擎配置  
+  evolution-config.yaml: |
+    versionManagement:
+      strategy: "semantic"
+      autoIncrement: true
+      prereleaseSupport: true
+    
+    refactoring:
+      autoDetect: true
+      suggestRefactoring: true
+      autoApply: false
+    
+    migration:
+      generateGuide: true
+      autoRollback: true
+      validationStrict: true
+    
+    sbomTracking:
+      diffEnabled: true
+      securityAlert: true
+      licenseTracking: true
+
+---
+# 服务配置
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-architect-service
+spec:
+  selector:
+    app: ai-architect
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+  type: LoadBalancer
+
+---
+# 持久化存储
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: templates-pvc
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: fast-ssd
+
+---
+# 服务账户和权限
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ai-architect-sa
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ai-architect-role
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "update"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ai-architect-binding
+subjects:
+  - kind: ServiceAccount
+    name: ai-architect-sa
+    namespace: default
+roleRef:
+  kind: ClusterRole
+  name: ai-architect-role
+  apiGroup: rbac.authorization.k8s.io

@@ -1,0 +1,42 @@
+# Purpose: Gatekeeper ConstraintTemplate for allowed internal domains on ExternalName Services.
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: k8sexternalnamealloweddomains
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sExternalNameAllowedDomains
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            allowedDomains:
+              type: array
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8s.externalname.allowed
+
+        violation[{"msg": msg}] {
+          input.review.kind.kind == "Service"
+          input.review.object.spec.type == "ExternalName"
+
+          not domain_allowed(input.review.object.spec.externalName, input.parameters.allowedDomains)
+
+          msg := sprintf("Service/%s: ExternalName %q not in allowed internal domains %v",
+                         [input.review.object.metadata.name,
+                          input.review.object.spec.externalName,
+                          input.parameters.allowedDomains])
+        }
+
+        domain_allowed(host, allowed) {
+          some d
+          d := allowed[_]
+          endswith(host, "." ++ d)
+        } or {
+          host == allowed[_]
+        }

@@ -1,0 +1,14 @@
+# Purpose: Invalid locale format to trigger schema failure
+name: invalid_locale
+valid: false
+payload:
+  type: render-hints
+  i18n:
+    supported_locales: ["zh_tw"]   # invalid underscore format
+    default_locale: "zh_tw"        # invalid
+    fallback_locale: "en"
+  accessibility:
+    aria_labels_enabled: true
+    keyboard_navigation: true
+    screen_reader_support: true
+    high_contrast_mode: true

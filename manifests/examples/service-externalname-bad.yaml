@@ -1,0 +1,11 @@
+# Purpose: Invalid ExternalName Service example (should trigger multiple policy violations).
+apiVersion: v1
+kind: Service
+metadata:
+  name: Service-Invalid-UPPERCASE-TOO-LONG-NAME-OVER-63-CHARS-XYZ
+  namespace: feature-badcase
+  labels:
+    namespace.io/lifecycle: active
+spec:
+  type: ExternalName
+  externalName: "*.malicious.example"

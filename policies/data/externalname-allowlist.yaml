@@ -1,0 +1,9 @@
+externalName:
+  allowlist:
+    - "db.internal.svc.cluster.local"
+    - "api.partner.example.com"
+  rules:
+    wildcard: false           # 禁止 *.example.com
+    bareDomain: false         # 禁止裸域（無子域）
+    requireFQDN: true         # 必須為完整 FQDN
+    maxLength: 253

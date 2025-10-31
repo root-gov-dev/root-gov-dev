@@ -1,0 +1,34 @@
+# Reusable Composite Action: Workflow Linter/Auto-Fixer
+# Purpose: Run in any repo to lint/repair GitHub workflows (pin SHA, minimal permissions, concurrency, timeouts)
+# Marketplace-ready metadata
+name: "Workflow Linter & Auto-Fixer (Pinned SHA, Least Privilege)"
+description: "Scans .github/workflows, proposes unified patch, and emits audit/evidence. No external actions. Ready for PR automation."
+author: "Platform Governance"
+branding:
+  color: "blue"
+  icon: "shield"
+
+inputs:
+  patch-out:
+    description: "Path to write unified diff patch"
+    required: false
+    default: "outputs/patch.diff"
+  report-json:
+    description: "Path to write JSON report"
+    required: false
+    default: "outputs/auto-fix-report.json"
+  report-md:
+    description: "Path to write Markdown report"
+    required: false
+    default: "outputs/auto-fix-report.md"
+
+runs:
+  using: "composite"
+  steps:
+    - shell: bash
+      run: |
+        set -euo pipefail
+        chmod +x scripts/workflow_repair.sh || true
+        mkdir -p "$(dirname "${{ inputs.patch-out }}")" "$(dirname "${{ inputs.report-json }}")" "$(dirname "${{ inputs.report-md }}")"
+        bash scripts/workflow_repair.sh --scan --patch-out "${{ inputs.patch-out }}" --report-json "${{ inputs.report-json }}" --report-md "${{ inputs.report-md }}"
+        echo "Action completed: reports at ${{ inputs.report-json }} / ${{ inputs.report-md }}"

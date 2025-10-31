@@ -1,0 +1,17 @@
+# Purpose: Gatekeeper constraint example for namespace naming convention (optional).
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: NamingConvention
+metadata:
+  name: namespace-naming-policy
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Namespace"]
+  parameters:
+    namingPattern: "^(team|tenant|feature)-[a-z0-9-]+$"
+    maxLength: 63
+    requiredLabels:
+      - "namespace.io/team"
+      - "namespace.io/environment"
+      - "namespace.io/lifecycle"

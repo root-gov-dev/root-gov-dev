@@ -1,0 +1,138 @@
+# AI 架构师开发环境 Docker Compose 配置
+version: '3.8'
+
+services:
+  # AI 架构师核心服务
+  ai-architect:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+      - "9090:9090"
+    environment:
+      - NODE_ENV=development
+      - GOVERNANCE_STRICT_MODE=true
+      - SEMANTIC_PARSER_ENABLED=true
+      - MODULE_GENERATION_ENABLED=true
+      - EVOLUTION_ENGINE_ENABLED=true
+    volumes:
+      - ./config:/config
+      - ./templates:/templates
+      - ./generated:/generated
+      - ./logs:/app/logs
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - ai-architect-network
+
+  # Redis 缓存和消息队列
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - ai-architect-network
+
+  # PostgreSQL 数据库
+  postgres:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=ai_architect
+      - POSTGRES_USER=ai_architect
+      - POSTGRES_PASSWORD=ai_architect_pass
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    networks:
+      - ai-architect-network
+
+  # 监控和指标收集
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/console_templates'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - ai-architect-network
+
+  # 可视化仪表板
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    depends_on:
+      - prometheus
+    networks:
+      - ai-architect-network
+
+  # 反向代理和负载均衡
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deployment/nginx.conf:/etc/nginx/nginx.conf
+      - ./ssl:/etc/nginx/ssl
+    depends_on:
+      - ai-architect
+    networks:
+      - ai-architect-network
+
+  # 日志聚合
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki-data:/loki
+    networks:
+      - ai-architect-network
+
+  # 分布式追踪
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"
+      - "14268:14268"
+    environment:
+      - COLLECTOR_ZIPKIN_HTTP_PORT=9411
+    networks:
+      - ai-architect-network
+
+volumes:
+  redis-data:
+  postgres-data:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+
+networks:
+  ai-architect-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

@@ -1,0 +1,64 @@
+# Purpose: Centralized policy data model for Kubernetes Service naming and ExternalName governance (single source of truth).
+version: v1
+naming:
+  namespace:
+    pattern: "^(team|tenant|feature)-[a-z0-9-]+$"
+    maxLength: 63
+    requiredLabels:
+      - "namespace.io/team"
+      - "namespace.io/environment"
+      - "namespace.io/lifecycle"
+      - "namespace.io/managed-by"
+  service:
+    pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])$"
+    maxLength: 63
+    requiredLabels:
+      - "namespace.io/domain"
+      - "namespace.io/lifecycle"
+
+externalName:
+  validation:
+    requireFQDN: true
+    forbidWildcard: true
+    forbidBareDomain: true
+    forbidDotless: true
+    forbidLocalhost: true
+    forbidIPLiteral: true
+    maxLength: 253
+    idnaNormalize: true            # Enable IDNA/punycode normalization in pipeline if applicable
+  allowlist:
+    - "db.internal.svc.cluster.local"
+    - "api.partner.example.com"
+  denylist:
+    - "*.malicious.example"
+    - "blocked.partner.example.com"
+  exceptions:
+    - host: "temp.partner.example.com"
+      namespaces: ["team-platform-prod", "team-platform-staging"]
+      expires_at: "2026-03-31T23:59:59Z"
+      reason: "合作方臨時接入；合約期至 2026Q1"
+  owners:
+    required: true
+    labelKeys:
+      - "owner"
+      - "namespace.io/owner"
+    defaultOwner: "platform-team"
+  audit:
+    record: true
+    codes:
+      - "EXTN_WILDCARD"
+      - "EXTN_BARE_DOMAIN"
+      - "EXTN_DOTLESS"
+      - "EXTN_LOCALHOST"
+      - "EXTN_IP_LITERAL"
+      - "EXTN_TOO_LONG"
+      - "EXTN_NOT_FQDN"
+      - "EXTN_NOT_ALLOWED"
+      - "EXTN_IN_DENYLIST"
+      - "EXTN_EXPIRED_EXCEPTION"
+      - "SVC_NAME_PATTERN"
+      - "SVC_NAME_TOO_LONG"
+      - "SVC_LABEL_MISSING"
+meta:
+  project: "k8s-naming-externalname-governance"
+  managedBy: "gitops"

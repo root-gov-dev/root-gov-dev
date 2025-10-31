@@ -1,0 +1,18 @@
+syft:
+  version: "1.17.0"
+  output: "cyclonedx-json"
+grype:
+  version: "0.76.3"
+  severity_block: ["High","Critical"]
+cosign:
+  version: "2.2.4"
+  mode: "keyless"         # 可改為 "kms" 或 "key-file"
+  annotations:
+    sbom.type: "cyclonedx"
+auto_fix:
+  enable: true
+  registry_fallback: "ghcr.io/secure-baseline"
+  replacement_map:
+    # 若發現高危 CVE，將非合規鏡像替換為已審核的 baseline
+    "busybox:latest": "ghcr.io/secure-baseline/busybox:1.36-secure"
+    "alpine:latest": "ghcr.io/secure-baseline/alpine:3.19-secure"

@@ -1,0 +1,29 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: namespace-naming
+  annotations:
+    policy.kubernetes.io/category: "governance"
+    policy.kubernetes.io/severity: "medium"
+spec:
+  validationFailureAction: Audit   # 可切換為 Enforce
+  rules:
+    - name: check-namespace-name-and-labels
+      match:
+        any:
+          - resources:
+              kinds: ["Namespace"]
+      exclude:
+        any:
+          - resources:
+              annotations:
+                policy.namespace.io/exception: "true"
+      validate:
+        message: "Namespace must match ^(team|tenant|feature)-[a-z0-9-]+$ and include required labels."
+        pattern:
+          metadata:
+            name: "^(team|tenant|feature)-[a-z0-9-]+$"
+            labels:
+              namespace.io/team: "?*"
+              namespace.io/environment: "?*"
+              namespace.io/lifecycle: "?*"

@@ -1,0 +1,131 @@
+# Purpose: Deep validation pipeline for YAML modules (schema + vectors + policy gate + evidence + audit summary)
+# Notes:
+# - No unpinned external actions for core logic; we use native git clone and Python.
+# - Conftest/Kyverno installed via scripts/install_tools.py (already present).
+# - Outputs are written to repo/artifacts/yaml-validation for traceability.
+name: yaml-deep-validation
+
+on:
+  pull_request:
+  push:
+    branches: [ "main", "develop" ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yaml-deep-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      OUT_DIR: artifacts/yaml-validation
+    steps:
+      - name: Prepare workspace (no external checkout)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p repo && cd repo
+          git init
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}"
+          if [ -n "${{ github.event.pull_request.head.sha || '' }}" ]; then
+            SHA="${{ github.event.pull_request.head.sha }}"
+          else
+            SHA="${GITHUB_SHA}"
+          fi
+          git fetch --depth=1 origin "${SHA}"
+          git checkout --detach "${SHA}"
+          echo "Checked out ${SHA}"
+          mkdir -p "${OUT_DIR}"
+
+      - name: Setup Python deps (jsonschema, PyYAML, blake3)
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          python3 -m pip install --upgrade pip >/dev/null
+          python3 -m pip install jsonschema==4.23.0 pyyaml==6.0.2 blake3==0.4.1 >/dev/null
+
+      - name: Validate modules (schema + vectors + config)
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          python3 scripts/validate_vectors.py --modules-root governance/modules --config-root config --out "${OUT_DIR}"
+      
+      - name: Install policy tools (Conftest + Kyverno)
+        shell: bash
+        working-directory: repo
+        env:
+          PATH: ${{ github.workspace }}/repo/bin:/usr/local/bin:/usr/bin:/bin
+        run: |
+          set -euo pipefail
+          python3 scripts/install_tools.py --tools conftest,kyverno --out "${OUT_DIR}/install-tools.json" || true
+          echo "PATH=$(pwd)/bin:$PATH" >> "$GITHUB_ENV"
+          ls -l ./bin || true
+
+      - name: Policy Gate (Conftest on modules if policies exist)
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          if [ -d tools/conftest/policies ]; then
+            set +e
+            ./bin/conftest test -p tools/conftest/policies governance/modules -o json > "${OUT_DIR}/conftest.results.json"
+            EC=$?
+            set -e
+            echo "Conftest exit code: $EC"
+            if [ $EC -ne 0 ]; then
+              echo "::error title=Policy Gate::Conftest reported failures"
+              exit 1
+            fi
+          else
+            echo '{"status":"skipped","reason":"no-policies"}' > "${OUT_DIR}/conftest.results.json"
+          fi
+
+      - name: Kyverno CLI validate (optional)
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          if [ -d kyverno ]; then
+            ./bin/kyverno apply kyverno/ -r governance/modules -o json > "${OUT_DIR}/kyverno.results.json" || true
+          else
+            echo '{"status":"skipped","reason":"no-kyverno-policies"}' > "${OUT_DIR}/kyverno.results.json"
+          fi
+
+      - name: Evidence hashes (SHA3-512 + BLAKE3)
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          python3 - << 'PY'
+import os, json, hashlib, glob
+out_dir = "artifacts/yaml-validation"
+paths = sorted(glob.glob(os.path.join(out_dir, "*")))
+out = {}
+for p in paths:
+  if os.path.isfile(p):
+    with open(p, "rb") as f:
+      data = f.read()
+    sha3 = hashlib.sha3_512(data).hexdigest()
+    try:
+      import blake3
+      b3 = blake3.blake3(data).hexdigest()
+    except Exception:
+      b3 = hashlib.sha256(data).hexdigest()
+    out[os.path.basename(p)] = {"sha3_512": sha3, "blake3": b3}
+with open(os.path.join(out_dir, "evidence.hash.json"), "w") as f:
+  json.dump(out, f, indent=2)
+print(json.dumps(out, indent=2))
+PY
+
+      - name: Summarize
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          echo "YAML Deep Validation completed. Reports under ${OUT_DIR}"

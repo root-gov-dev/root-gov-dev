@@ -1,0 +1,15 @@
+# Purpose: Gatekeeper Constraint to enforce allowed internal domains for ExternalName.
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sExternalNameAllowedDomains
+metadata:
+  name: externalname-allowed-internal-domains
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Service"]
+  parameters:
+    allowedDomains:
+      - "corp.internal"
+      - "svc.cluster.local"
+      - "internal.company"

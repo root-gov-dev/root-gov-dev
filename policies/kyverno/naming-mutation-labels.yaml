@@ -1,0 +1,21 @@
+# File purpose: Kyverno mutate policy injecting defaults where safe (non-business critical).
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: svc-cm-secret-label-defaults
+  annotations:
+    policies.kyverno.io/title: "SVC/CM/Secret Label Defaults"
+    policies.kyverno.io/description: "Inject safe defaults for recommended labels when missing."
+spec:
+  background: true
+  rules:
+    - name: inject-app-managed-by
+      match:
+        any:
+        - resources:
+            kinds: ["Service","ConfigMap","Secret"]
+      mutate:
+        patchStrategicMerge:
+          metadata:
+            labels:
+              app.kubernetes.io/managed-by: "kyverno"

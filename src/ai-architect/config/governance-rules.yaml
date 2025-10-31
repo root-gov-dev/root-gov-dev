@@ -1,0 +1,82 @@
+# AI 架构师治理规则配置
+# 定义代码生成的质量标准和安全要求
+
+governance:
+  code_generation:
+    typescript:
+      strict_mode: true
+      no_any_type: true
+      explicit_return_types: true
+      interface_naming: "I[A-Z].*|.*Interface"
+    
+    react:
+      functional_components_only: true
+      hooks_naming_convention: "use[A-Z].*"
+      prop_validation: required
+      no_inline_styles: true
+    
+    testing:
+      coverage_threshold: 80
+      unit_tests: required
+      integration_tests: required
+      e2e_tests: optional
+    
+    documentation:
+      jsdoc_required: true
+      readme_sections: 
+        - installation
+        - usage
+        - api
+        - examples
+        - contributing
+      changelog_required: true
+      
+  compliance:
+    security:
+      no_hardcoded_secrets: true
+      input_validation: required
+      output_sanitization: required
+      xss_protection: true
+      csrf_protection: true
+    
+    performance:
+      bundle_size_limit: "500kb"
+      render_time_limit: "100ms"
+      memory_usage_limit: "50mb"
+      network_requests_limit: 10
+    
+    accessibility:
+      aria_labels_enabled: true
+      keyboard_navigation: true
+      screen_reader_support: true
+      high_contrast_mode: true
+    
+  quality_gates:
+    minimum_quality_score: 80
+    maximum_issues_per_module: 5
+    critical_issues_allowed: 0
+    security_issues_allowed: 0
+    
+  evidence_requirements:
+    schema_validation: required
+    test_coverage: required
+    security_scan: required
+    performance_benchmark: optional
+    accessibility_audit: optional
+
+  audit_trail:
+    enabled: true
+    retention_days: 365
+    immutable_logs: true
+    hash_algorithm: "sha3-512"
+    
+  escalation_rules:
+    quality_below_threshold:
+      action: "block_merge"
+      notify: ["team-lead", "quality-engineering"]
+    security_issue_detected:
+      action: "immediate_block"
+      notify: ["security-team", "cto"]
+    performance_regression:
+      action: "warn_and_monitor"
+      notify: ["performance-team"]

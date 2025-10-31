@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/policy-attestations.schema.json",
+  "title": "Policy Attestations",
+  "type": "object",
+  "properties": {
+    "generator": {"type": "string"},
+    "inputs_sot": {"type": "array", "items": {"type":"object"}},
+    "validation": {
+      "type": "object",
+      "properties": {
+        "hashes": {"type": "array", "items": {"type":"object"}},
+        "dry_run": {"type": "boolean"},
+        "evidence_refs": {"type": "array", "items": {"type":"string", "format":"uri"}}
+      }
+    },
+    "source_ref": {"type": "string"},
+    "change_request_id": {"type": "string"},
+    "rfc_id": {"type": "string"},
+    "review": {
+      "type": "object",
+      "properties": {
+        "reviewer": {"type": "string"},
+        "status": {"type": "string", "enum": ["pending","approved","rejected"]},
+        "at": {"type": "string", "format": "date-time"}
+      }
+    }
+  },
+  "required": ["generator","inputs_sot","validation","source_ref"]
+}
