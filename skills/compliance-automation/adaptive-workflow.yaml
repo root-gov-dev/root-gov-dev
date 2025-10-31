@@ -1,0 +1,93 @@
+name: adaptive-compliance-workflow
+on:
+  push:
+    paths:
+      - '**/*.yaml'
+      - '**/*.yml'
+      - '**/*.py'
+      - '**/*.sh'
+  pull_request:
+    paths:
+      - '**/*'
+
+jobs:
+  intelligent-scan:
+    runs-on: ubuntu-latest
+    outputs:
+      priority_issues: ${{ steps.analyze.outputs.priority_issues }}
+      estimated_time: ${{ steps.analyze.outputs.estimated_time }}
+      strategy: ${{ steps.analyze.outputs.strategy }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 获取完整历史用于分析
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: |
+          pip install PyYAML
+          
+      - name: Run Decision Engine Analysis
+        id: analyze
+        run: |
+          python skills/compliance-automation/decision-engine.py > analysis_report.json
+          echo "priority_issues=$(jq -c '.predicted_issues' analysis_report.json)" >> $GITHUB_OUTPUT
+          echo "estimated_time=$(jq -r '.estimated_time' analysis_report.json)" >> $GITHUB_OUTPUT
+          echo "strategy=$(jq -c '.remediation_strategy' analysis_report.json)" >> $GITHUB_OUTPUT
+          
+      - name: Upload Analysis Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: compliance-analysis
+          path: analysis_report.json
+          
+  adaptive-remediation:
+    runs-on: ubuntu-latest
+    needs: intelligent-scan
+    if: needs.intelligent-scan.outputs.priority_issues != '[]'
+    
+    strategy:
+      matrix:
+        segment: ['immediate', 'batch', 'deferred']
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Checkout Target Branch
+        run: |
+          git checkout ${{ github.head_ref || github.ref_name }}
+          
+      - name: Run Segment-Specific Fixes
+        run: |
+          python skills/compliance-automation/intelligent-scanner.py \
+            --segment ${{ matrix.segment }} \
+            --strategy '${{ needs.intelligent-scan.outputs.strategy }}'
+            
+      - name: Create Fix PR if Needed
+        if: matrix.segment == 'immediate' && success()
+        uses: peter-evans/create-pull-request@v5
+        with:
+          title: "自动合规修复: ${{ github.sha }}"
+          body: |
+            ## 自动生成的合规修复
+            - **决策引擎分析**: ${{ needs.intelligent-scan.outputs.strategy }}
+            - **预估修复时间**: ${{ needs.intelligent-scan.outputs.estimated_time }}分钟
+            - **修复分段**: ${{ matrix.segment }}
+          branch: auto-compliance-fix-${{ github.sha }}
+          delete-branch: true
+          
+  learning-feedback:
+    runs-on: ubuntu-latest
+    needs: [intelligent-scan, adaptive-remediation]
+    if: always()
+    
+    steps:
+      - name: Update Decision Model
+        run: |
+          echo "记录本次执行结果到决策引擎..."
+          # 这里会调用决策引擎的记录功能
+          python skills/compliance-automation/decision-engine.py --record-outcome

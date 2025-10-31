@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/workflow-evidence.schema.json",
+  "title": "Workflow Evidence",
+  "type": "object",
+  "properties": {
+    "plan": {"type": "object"},
+    "artifacts": {"type": "array", "items": {"type":"object"}},
+    "decisions": {"type": "array", "items": {"type":"object"}},
+    "test_matrix": {"type": "object"}
+  },
+  "required": ["plan","artifacts","decisions"]
+}

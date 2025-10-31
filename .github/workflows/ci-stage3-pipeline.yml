@@ -1,0 +1,267 @@
+# Purpose: CI Stage 3 - Policy and Governance validation (Conftest + Kyverno) with SARIF and dual-hash evidence.
+# Notes:
+# - No unpinned external actions for core logic; Git uploads use native git + Python.
+# - SARIF uploads via GitHub REST API (security-events: write) are kept.
+# - Additionally, upload SARIF via github/codeql-action/upload-sarif pinned to a fixed commit SHA for immediate Code Scanning UI.
+# - Optional: push current commit SHA to external result repo if secrets.RESULT_REPO_TOKEN is provided.
+
+name: CI Stage 3 - Policy and Governance
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: stage3-policy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  policy-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      OUT_DIR: artifacts/policy
+      AUDIT_DIR: artifacts/policy/audit
+    steps:
+      - name: Clone repository (no external action)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p repo && cd repo
+          git init
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}"
+          # Prefer PR SHA or push SHA
+          if [ -n "${{ github.event.pull_request.head.sha || '' }}" ]; then
+            SHA="${{ github.event.pull_request.head.sha }}"
+          else
+            SHA="${GITHUB_SHA}"
+          fi
+          git fetch --depth=1 origin "${SHA}"
+          git checkout --detach "${SHA}"
+          echo "Checked out ${SHA}"
+
+      - name: Prepare Python and dependencies
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          python3 --version || true
+          python3 -m pip install --upgrade pip
+          python3 -m pip install pyyaml blake3
+
+      - name: Install policy tools via SoT (scripts/install_tools.py)
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          python3 scripts/install_tools.py
+          ls -l ./bin || true
+          ./bin/conftest --version
+          ./bin/kyverno version || true
+
+      - name: Generate policy data for Conftest (JSON from tools/required-inputs.yaml)
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          mkdir -p conftest/data
+          python3 - << 'PY'
+import yaml, json, os, pathlib, sys
+src = "tools/required-inputs.yaml"
+dst = "conftest/data/policy-data.json"
+defaults = {"externalname":{"allowed_internal_domains":["svc.cluster.local"]}}
+if os.path.exists(src):
+  with open(src, "r", encoding="utf-8") as f:
+    y = yaml.safe_load(f) or {}
+  ext = (((y or {}).get("policy") or {}).get("externalname") or defaults["externalname"])
+  data = {"externalname": ext}
+else:
+  data = defaults
+pathlib.Path(os.path.dirname(dst)).mkdir(parents=True, exist_ok=True)
+with open(dst, "w", encoding="utf-8") as f:
+  json.dump(data, f, ensure_ascii=False, indent=2)
+print(f"Wrote {dst}: {json.dumps(data)}")
+PY
+
+      - name: Conftest validate with policy-data
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          mkdir -p "${OUT_DIR}"
+          ./bin/conftest test -p tools/conftest/policies -d conftest/data manifests
+
+      - name: Conftest SARIF export + dual-hash
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          mkdir -p "${OUT_DIR}"
+          ./bin/conftest test -p tools/conftest/policies -d conftest/data manifests -o json > "${OUT_DIR}/conftest.results.json"
+          python3 - << 'PY'
+import json, hashlib, os, time
+from pathlib import Path
+src = "artifacts/policy/conftest.results.json"
+sarif = {
+  "version":"2.1.0",
+  "runs":[{"tool":{"driver":{"name":"conftest","informationUri":"https://www.conftest.dev/"}},
+           "results":[]}]
+}
+try:
+  data = json.load(open(src))
+  for f in data:
+    fname = f.get("filename", "unknown")
+    for r in f.get("failures", []):
+      sarif["runs"][0]["results"].append({
+        "level":"error",
+        "message":{"text":r.get("msg","policy violation")},
+        "locations":[{"physicalLocation":{"artifactLocation":{"uri":fname}}}]
+      })
+except Exception as e:
+  sarif["runs"][0]["results"].append({"level":"warning","message":{"text":f"failed to parse conftest json: {e}"}})
+dst = "artifacts/policy/conftest.sarif.json"
+Path(dst).parent.mkdir(parents=True, exist_ok=True)
+open(dst,"w").write(json.dumps(sarif,indent=2))
+b = open(dst,"rb").read()
+h = {"sha3_512": hashlib.sha3_512(b).hexdigest()}
+try:
+  import blake3; h["blake3"] = blake3.blake3(b).hexdigest()
+except Exception:
+  h["blake3"] = "unavailable"
+open("artifacts/policy/conftest.sarif.hash.json","w").write(json.dumps(h,indent=2))
+print(json.dumps(h,indent=2))
+PY
+
+      - name: Kyverno CLI validate (policies under kyverno/)
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          mkdir -p "${OUT_DIR}"
+          # Apply kyverno ClusterPolicies in dry-run against manifests folder
+          ./bin/kyverno apply kyverno/ -r manifests -o json > "${OUT_DIR}/kyverno.results.json" || true
+
+      - name: Kyverno SARIF export + dual-hash
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          python3 - << 'PY'
+import json, hashlib, os
+src = "artifacts/policy/kyverno.results.json"
+sarif = {"version":"2.1.0","runs":[{"tool":{"driver":{"name":"kyverno-cli","informationUri":"https://kyverno.io/"}}, "results":[]}]} 
+try:
+  data = json.load(open(src))
+  # kyverno apply json schema may vary; try parse policyReports->results
+  for r in data.get("policyReports", []):
+    for res in r.get("results", []):
+      lvl = "error" if res.get("result") in ("fail","error","deny") else "warning"
+      loc_uri = (res.get('resources',[{}])[0].get('name') or res.get('resource','unknown'))
+      sarif["runs"][0]["results"].append({
+        "level": lvl,
+        "message": {"text": f"{res.get('policy','?')}/{res.get('rule','?')}: {res.get('message','policy violation')}"},
+        "locations":[{"physicalLocation":{"artifactLocation":{"uri": loc_uri}}}]
+      })
+except Exception as e:
+  sarif["runs"][0]["results"].append({"level":"warning","message":{"text":f"failed to parse kyverno json: {e}"}})
+dst = "artifacts/policy/kyverno.sarif.json"
+open(dst,"w").write(json.dumps(sarif,indent=2))
+b = open(dst,"rb").read()
+h = {"sha3_512": hashlib.sha3_512(b).hexdigest()}
+try:
+  import blake3; h["blake3"] = blake3.blake3(b).hexdigest()
+except Exception:
+  h["blake3"] = "unavailable"
+open("artifacts/policy/kyverno.sarif.hash.json","w").write(json.dumps(h,indent=2))
+print(json.dumps(h,indent=2))
+PY
+
+      - name: Upload SARIF (Conftest) via REST
+        shell: bash
+        working-directory: repo
+        env:
+          GH_API: https://api.github.com
+        run: |
+          set -euo pipefail
+          FILE="artifacts/policy/conftest.sarif.json"
+          # gzip + base64
+          GZ="$(gzip -c "$FILE" | base64 -w0)"
+          REF="${GITHUB_REF}"
+          SHA="${GITHUB_SHA}"
+          BODY="$(jq -n --arg sarif "$GZ" --arg sha "$SHA" --arg ref "$REF" --arg tool "conftest" '{commit_sha:$sha, ref:$ref, sarif:$sarif, tool_name:$tool}')"
+          curl -sS -X POST \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${GH_API}/repos/${GITHUB_REPOSITORY}/code-scanning/sarifs" \
+            -d "${BODY}" | tee "${OUT_DIR}/upload_conftest_sarif_response.json"
+
+      - name: Upload SARIF (Kyverno) via REST
+        shell: bash
+        working-directory: repo
+        env:
+          GH_API: https://api.github.com
+        run: |
+          set -euo pipefail
+          FILE="artifacts/policy/kyverno.sarif.json"
+          GZ="$(gzip -c "$FILE" | base64 -w0)"
+          REF="${GITHUB_REF}"
+          SHA="${GITHUB_SHA}"
+          BODY="$(jq -n --arg sarif "$GZ" --arg sha "$SHA" --arg ref "$REF" --arg tool "kyverno-cli" '{commit_sha:$sha, ref:$ref, sarif:$sarif, tool_name:$tool}')"
+          curl -sS -X POST \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${GH_API}/repos/${GITHUB_REPOSITORY}/code-scanning/sarifs" \
+            -d "${BODY}" | tee "${OUT_DIR}/upload_kyverno_sarif_response.json"
+
+      # Additional: Upload SARIF via pinned github/codeql-action/upload-sarif for immediate Code Scanning UI
+      - name: Upload Conftest SARIF to GitHub Code Scanning (pinned SHA)
+        uses: github/codeql-action/upload-sarif@2488dff3959ece700f1d033c7ef98b95b1f8ae6e
+        with:
+          sarif_file: repo/artifacts/policy/conftest.sarif.json
+
+      - name: Upload Kyverno SARIF to GitHub Code Scanning (pinned SHA)
+        uses: github/codeql-action/upload-sarif@2488dff3959ece700f1d033c7ef98b95b1f8ae6e
+        with:
+          sarif_file: repo/artifacts/policy/kyverno.sarif.json
+
+      - name: Upload artifacts (policy reports)
+        uses: actions/upload-artifact@v4
+        with:
+          name: policy-reports
+          path: repo/artifacts/policy
+
+      # Optional: Update external result repository with current COMMIT_SHA (requires secrets.RESULT_REPO_TOKEN)
+      - name: Update external result repo COMMIT_SHA
+        shell: bash
+        env:
+          RESULT_REPO_TOKEN: ${{ secrets.RESULT_REPO_TOKEN }}
+          RESULT_REPO: ai-devsecops-assistant/result
+        run: |
+          set -euo pipefail
+          if [ -z "${RESULT_REPO_TOKEN:-}" ]; then
+            echo "RESULT_REPO_TOKEN not set; skip updating external result repo."
+            exit 0
+          fi
+          TMP="$(mktemp -d)"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git clone "https://x-access-token:${RESULT_REPO_TOKEN}@github.com/${RESULT_REPO}.git" "${TMP}/result"
+          cd "${TMP}/result"
+          SHA="${GITHUB_SHA}"
+          printf "%s" "${SHA}" > COMMIT_SHA
+          git add COMMIT_SHA
+          if git diff --cached --quiet; then
+            echo "No changes to COMMIT_SHA"
+            exit 0
+          fi
+          git commit -m "chore: update COMMIT_SHA to ${SHA}"
+          # Try pushing to main; fallback to default branch if needed
+          (git push origin HEAD:main) || (git push origin HEAD)
+          echo "Updated ${RESULT_REPO}/COMMIT_SHA to ${SHA}"

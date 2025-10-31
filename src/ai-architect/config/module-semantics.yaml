@@ -1,0 +1,234 @@
+# 模块语义定义配置
+# 定义各种模块类型的语义、能力和治理规则
+
+moduleTypes:
+  validator:
+    description: "用于数据验证、合规检查、供应链安全的治理模块"
+    capabilities:
+      - schema_validation
+      - sbom_verification
+      - compliance_checking
+      - vulnerability_scanning
+    requiredFiles:
+      - "validators/{domain}/schema.ts"
+      - "validators/{domain}/validator.ts"
+    optionalFiles:
+      - "validators/{domain}/sbom.ts"      # 如果 features 包含 SBOM
+      - "validators/{domain}/compliance.ts" # 如果 governance 有合规要求
+    dependencies:
+      required: ["zod"]
+      optional: ["@types/node", "ajv", "joi"]
+    governance:
+      injectable: true
+      extendable: true
+      overridable: false
+      observable: true
+    
+  writer:
+    description: "用于自动生成代码、模块、组件的生成型模块"
+    capabilities:
+      - react_component_generation
+      - hook_generation
+      - context_generation
+      - type_generation
+    requiredFiles:
+      - "writers/{domain}/generator.ts"
+      - "writers/{domain}/templates/"
+    optionalFiles:
+      - "writers/{domain}/hooks/"          # 如果生成 React Hooks
+      - "writers/{domain}/components/"     # 如果生成 React 组件
+    dependencies:
+      required: ["react", "typescript"]
+      optional: ["@types/react", "zod", "tailwindcss"]
+    governance:
+      injectable: true
+      extendable: true
+      testable: true
+      documentable: true
+    
+  visual:
+    description: "用于数据可视化、图表、仪表板的视觉模块"
+    capabilities:
+      - chart_generation
+      - dashboard_creation
+      - data_visualization
+      - interactive_components
+    requiredFiles:
+      - "visuals/{domain}/charts.ts"
+      - "visuals/{domain}/components.tsx"
+    optionalFiles:
+      - "visuals/{domain}/themes/"         # 如果支持主题
+      - "visuals/{domain}/animations/"     # 如果支持动画
+    dependencies:
+      required: ["react", "d3", "chart.js"]
+      optional: ["@types/d3", "recharts", "victory"]
+    governance:
+      injectable: true
+      extendable: true
+      responsive: true
+      accessible: true
+    
+  ci:
+    description: "用于 CI/CD 流程、部署、测试自动化的流程模块"
+    capabilities:
+      - pipeline_generation
+      - deployment_automation
+      - test_orchestration
+      - security_scanning
+    requiredFiles:
+      - "ci/{domain}/workflows/"
+      - "ci/{domain}/scripts/"
+    optionalFiles:
+      - "ci/{domain}/configs/"             # 如果包含配置文件
+      - "ci/{domain}/templates/"           # 如果包含模板文件
+    dependencies:
+      required: ["github-actions", "docker"]
+      optional: ["kubernetes", "terraform", "ansible"]
+    governance:
+      injectable: true
+      secure: true
+      auditable: true
+      repeatable: true
+    
+  test:
+    description: "用于单元测试、集成测试、E2E 测试的测试模块"
+    capabilities:
+      - unit_test_generation
+      - integration_testing
+      - e2e_testing
+      - performance_testing
+    requiredFiles:
+      - "tests/{domain}/unit/"
+      - "tests/{domain}/integration/"
+    optionalFiles:
+      - "tests/{domain}/e2e/"              # 如果包含 E2E 测试
+      - "tests/{domain}/performance/"      # 如果包含性能测试
+    dependencies:
+      required: ["jest", "@testing-library/react"]
+      optional: ["playwright", "cypress", "vitest"]
+    governance:
+      injectable: true
+      coverable: true
+      maintainable: true
+      reliable: true
+    
+  docs:
+    description: "用于 API 文档、使用说明、架构文档的文档模块"
+    capabilities:
+      - api_documentation
+      - usage_examples
+      - architecture_diagrams
+      - tutorial_creation
+    requiredFiles:
+      - "docs/{domain}/api.md"
+      - "docs/{domain}/usage.md"
+    optionalFiles:
+      - "docs/{domain}/examples/"          # 如果包含代码示例
+      - "docs/{domain}/diagrams/"          # 如果包含架构图
+    dependencies:
+      required: ["markdown", "typedoc"]
+      optional: ["swagger", "mermaid", "docusaurus"]
+    governance:
+      injectable: true
+      maintainable: true
+      searchable: true
+      versioned: true
+    
+  api:
+    description: "用于 REST API、GraphQL、WebSocket 的 API 模块"
+    capabilities:
+      - rest_api_generation
+      - graphql_schema_creation
+      - websocket_implementation
+      - api_documentation
+    requiredFiles:
+      - "api/{domain}/routes.ts"
+      - "api/{domain}/controllers.ts"
+    optionalFiles:
+      - "api/{domain}/middleware/"         # 如果包含中间件
+      - "api/{domain}/schemas/"            # 如果包含数据模式
+    dependencies:
+      required: ["express", "graphql"]
+      optional: ["apollo-server", "socket.io", "fastify"]
+    governance:
+      injectable: true
+      secure: true
+      scalable: true
+      versioned: true
+    
+  state:
+    description: "用于状态管理、数据流、缓存的状态模块"
+    capabilities:
+      - state_management
+      - data_flow_control
+      - caching_implementation
+      - persistence_handling
+    requiredFiles:
+      - "state/{domain}/store.ts"
+      - "state/{domain}/actions.ts"
+    optionalFiles:
+      - "state/{domain}/reducers/"         # 如果使用 Redux 模式
+      - "state/{domain}/selectors/"        # 如果包含选择器
+    dependencies:
+      required: ["react", "zustand"]
+      optional: ["redux", "mobx", "react-query"]
+    governance:
+      injectable: true
+      predictable: true
+      debuggable: true
+      testable: true
+
+# 通用治理规则
+governance:
+  security:
+    - no_hardcoded_secrets
+    - input_validation_required
+    - output_sanitization_required
+    - secure_dependencies_only
+  
+  compliance:
+    - gdpr_compliance
+    - sox_compliance  
+    - accessibility_standards
+    - license_compliance
+  
+  quality:
+    - type_safety_required
+    - test_coverage_minimum_80
+    - documentation_required
+    - code_review_mandatory
+  
+  performance:
+    - bundle_size_limits
+    - render_time_constraints
+    - memory_usage_limits
+    - network_optimization
+
+# 语义映射规则
+semanticMappings:
+  naturalLanguage:
+    - pattern: "create a validator for"
+      moduleType: "validator"
+      features: ["schema_validation"]
+    
+    - pattern: "generate a react hook for"
+      moduleType: "writer" 
+      features: ["hook_generation"]
+    
+    - pattern: "build an api endpoint for"
+      moduleType: "api"
+      features: ["rest_api_generation"]
+    
+    - pattern: "create documentation for"
+      moduleType: "docs"
+      features: ["api_documentation"]
+    
+    - pattern: "add tests for"
+      moduleType: "test"
+      features: ["unit_test_generation"]
+
+  features:
+    sbom: ["sbom_verification", "vulnerability_scanning"]
+    compliance: ["compliance_checking", "gdpr_compliance"]
+    security: ["input_validation", "output_sanitization"]
+    performance: ["bundle_size_limits", "render_time_constraints"]

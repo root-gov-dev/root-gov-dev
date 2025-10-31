@@ -1,0 +1,14 @@
+{
+  "_type": "https://in-toto.io/Statement/v1",
+  "subject": [],
+  "predicateType": "https://slsa.dev/provenance/v1",
+  "predicate": {
+    "buildType": "stub",
+    "builder": {
+      "id": "https://example.com/builder"
+    },
+    "metadata": {
+      "buildInvocationId": "stub-0001"
+    }
+  }
+}

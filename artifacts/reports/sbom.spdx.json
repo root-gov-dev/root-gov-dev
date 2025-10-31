@@ -1,0 +1,12 @@
+{
+  "spdxVersion": "SPDX-2.3",
+  "dataLicense": "CC0-1.0",
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "name": "sample-sbom",
+  "documentNamespace": "http://spdx.org/spdxdocs/sample-sbom-1.0",
+  "creationInfo": {
+    "created": "2025-01-01T00:00:00Z",
+    "creators": ["Tool: sample-generator"]
+  },
+  "packages": []
+}

@@ -1,0 +1,27 @@
+# File purpose: Template Service (ClusterIP) with semantic port and required labels.
+apiVersion: v1
+kind: Service
+metadata:
+  name: team-platform-api
+  labels:
+    namespace.io/team: platform
+    namespace.io/environment: production
+    namespace.io/lifecycle: active
+    namespace.io/managed-by: gitops
+    namespace.io/contract-ref: urn:namespace:contract:core:v1
+    app.kubernetes.io/name: platform-api
+    app.kubernetes.io/instance: platform-api-prod
+  annotations:
+    description: "Platform API service"
+    contact: "platform-team@example.com"
+    lifecycle.review-date: "2025-12-31"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: platform-api
+    app.kubernetes.io/instance: platform-api-prod
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP

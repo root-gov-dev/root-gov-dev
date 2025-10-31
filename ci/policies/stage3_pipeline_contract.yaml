@@ -1,0 +1,32 @@
+# Contract for Stage-3 CI pipeline
+metadata:
+  name: stage3-ci
+  version: 1.0.0
+trigger:
+  on: [pull_request, workflow_dispatch]
+stages:
+  build:
+    goals: ["compile", "package"]
+  test:
+    goals: ["unit", "integration"]
+  scan:
+    goals: ["sast", "sca", "policy"]
+  attest:
+    goals: ["provenance", "sign"]
+  report:
+    goals: ["summary", "evidence"]
+artifacts:
+  paths:
+    - artifacts/stage3
+  expire_in: 14d
+evidence_output:
+  format: ["json", "jsonl"]
+  hash: ["SHA3-512"]
+  uri: "repo://artifacts/stage3"
+fail_action:
+  on_fail: ["notify"]
+  notify: ["slack://team-channel-placeholder"]
+audit_log:
+  path: artifacts/stage3/audit.jsonl
+  retention: 90d
+  fields: ["stage","status","note","at"]

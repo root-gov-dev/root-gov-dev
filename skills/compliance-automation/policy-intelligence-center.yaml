@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: policy-intelligence-rules
+  namespace: platform-system
+data:
+  # 智能修復規則庫
+  image-replacement-rules: |
+    {
+      "busybox:latest": {
+        "target": "ghcr.io/secure-baseline/busybox:1.36-secure",
+        "risk": "critical",
+        "remediation": "auto",
+        "justification": "使用已掃描簽名的安全基礎鏡像"
+      },
+      "alpine:latest": {
+        "target": "ghcr.io/secure-baseline/alpine:3.19-secure", 
+        "risk": "high",
+        "remediation": "auto",
+        "justification": "替換為漏洞修復版本"
+      },
+      "nginx:.*": {
+        "target": "ghcr.io/secure-baseline/nginx:1.24-hardened",
+        "risk": "medium",
+        "remediation": "semi-auto",
+        "justification": "使用強化安全配置的nginx"
+      }
+    }
+  
+  namespace-labeling-rules: |
+    {
+      "required_labels": ["team", "environment", "lifecycle"],
+      "auto_generation": {
+        "environment": {
+          "pattern": ".*-prod$": "production",
+          "pattern": ".*-staging$": "staging", 
+          "pattern": ".*-dev$": "development"
+        },
+        "lifecycle": {
+          "default": "active"
+        }
+      }
+    }
+  
+  security-context-rules: |
+    {
+      "auto_fixes": {
+        "runAsNonRoot": true,
+        "allowPrivilegeEscalation": false,
+        "runAsUser": 1000,
+        "runAsGroup": 1000
+      }
+    }

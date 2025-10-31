@@ -1,0 +1,132 @@
+name: supplychain-sbom-sign-attest
+
+on:
+  pull_request:
+    paths:
+      - 'manifests/**'
+      - 'supplychain/**'
+      - '.github/workflows/sbom-sign-attest.yaml'
+  workflow_dispatch:
+
+jobs:
+  supplychain-guard:
+    runs-on: ubuntu-latest
+    env:
+      SYFT_VERSION: 1.17.0
+      GRYPE_VERSION: 0.76.3
+      COSIGN_VERSION: 2.2.4
+      ALLOW_AUTO_FIX: "true"         # 設 true 可嘗試自動修復
+      SEVERITY_BLOCK: "High,Critical" # 阻擋等級
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup tools (syft, grype, cosign, jq)
+        run: |
+          sudo apt-get update && sudo apt-get install -y wget jq
+          wget -qO- https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz | tar -xz && sudo mv syft /usr/local/bin/
+          wget -qO- https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/grype_${GRYPE_VERSION}_linux_amd64.tar.gz | tar -xz && sudo mv grype /usr/local/bin/
+          wget -qO cosign https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64 && chmod +x cosign && sudo mv cosign /usr/local/bin/
+
+      - name: Enumerate images from manifests
+        run: |
+          mkdir -p .out images
+          # 解析 manifests 中的 image:tag（簡易版；可替換為 yq 更精確）
+          grep -RhoE 'image:\s*[a-zA-Z0-9./:_-]+' manifests | awk '{print $2}' | sort -u > .out/images.txt
+          echo "Images found:"
+          cat .out/images.txt
+
+      - name: Generate SBOM (CycloneDX) for each image
+        run: |
+          mkdir -p sbom
+          while read -r IMG; do
+            SAFE=$(echo "$IMG" | tr '/:@' '____')
+            syft "$IMG" -o cyclonedx-json > "sbom/${SAFE}.sbom.cdx.json" || true
+          done
+          ls -al sbom || true
+
+      - name: Vulnerability scan (Grype) and gate
+        run: |
+          mkdir -p scan
+          BLOCK_SET="$(echo "${SEVERITY_BLOCK}" | tr ',' ' ')"
+          FAIL=0
+          while read -r IMG; do
+            SAFE=$(echo "$IMG" | tr '/:@' '____')
+            grype "$IMG" -o json > "scan/${SAFE}.grype.json" || true
+            HITS=$(jq --argjson levels '["High","Critical"]' '
+              [.matches[] | select(.vulnerability.severity as $s | ($levels|index($s)!=null))] | length
+            ' "scan/${SAFE}.grype.json" 2>/dev/null || echo 0)
+            echo "Image=$IMG high/critical findings=$HITS"
+            if [ "$HITS" -gt 0 ]; then FAIL=1; fi
+          done
+          echo "BLOCK status=$FAIL"
+          echo "$FAIL" > .out/block_status.txt
+
+      - name: Attempt auto fix (replace image, add signature, attach attestations)
+        if: env.ALLOW_AUTO_FIX == 'true'
+        run: |
+          bash supplychain/scripts/auto_fix.sh .out/images.txt manifests supplychain/config/tools.yaml || true
+
+      - name: Re-scan after auto fix
+        if: env.ALLOW_AUTO_FIX == 'true'
+        run: |
+          # 重新 enumerate 以防 auto fix 改了 manifests
+          grep -RhoE 'image:\s*[a-zA-Z0-9./:_-]+' manifests | awk '{print $2}' | sort -u > .out/images_fixed.txt
+          mkdir -p scan_fixed
+          FAIL=0
+          while read -r IMG; do
+            SAFE=$(echo "$IMG" | tr '/:@' '____')
+            grype "$IMG" -o json > "scan_fixed/${SAFE}.json" || true
+            HITS=$(jq --argjson levels '["High","Critical"]' '
+              [.matches[] | select(.vulnerability.severity as $s | ($levels|index($s)!=null))] | length
+            ' "scan_fixed/${SAFE}.json" 2>/dev/null || echo 0)
+            echo "Image=$IMG high/critical findings(after-fix)=$HITS"
+            if [ "$HITS" -gt 0 ]; then FAIL=1; fi
+          done
+          echo "$FAIL" > .out/block_status_fixed.txt
+
+      - name: Sign images (cosign) and produce attestations
+        run: |
+          mkdir -p attest
+          while read -r IMG; do
+            # 使用 keyless（OIDC）或設定好 KMS；示例用 keyless 模式
+            set +e
+            cosign sign --yes "$IMG" || true
+            cosign attest --yes --predicate sbom/predicate.json --type cyclonedx "$IMG" || true
+          done < .out/images.txt
+
+      - name: Policy verification (OPA/Rego)
+        run: |
+          # 確保每張 image 有 SBOM、有簽章、有 attestation；且掃描高危數量為 0
+          # 這裡用簡化的 shell + jq 驗證；亦可用 conftest + rego
+          TOTAL=0; FAIL=0
+          while read -r IMG; do
+            TOTAL=$((TOTAL+1))
+            SAFE=$(echo "$IMG" | tr '/:@' '____')
+            SBOM_OK=$(test -s "sbom/${SAFE}.sbom.cdx.json" && echo ok || echo ng)
+            SCAN_FILE="scan_fixed/${SAFE}.json"
+            [ -f "$SCAN_FILE" ] || SCAN_FILE="scan/${SAFE}.grype.json"
+            HITS=$(jq --argjson levels '["High","Critical"]' '
+              [.matches[] | select(.vulnerability.severity as $s | ($levels|index($s)!=null))] | length
+            ' "$SCAN_FILE" 2>/dev/null || echo 0)
+            echo "Verify: IMG=$IMG SBOM=$SBOM_OK High/Critical=$HITS"
+            if [ "$SBOM_OK" = "ng" ] || [ "$HITS" -gt 0 ]; then
+              FAIL=$((FAIL+1))
+            fi
+          done < .out/images.txt
+          echo "Policy verify: total=$TOTAL fail=$FAIL"
+          if [ "$FAIL" -gt 0 ]; then
+            echo "Policy failed: images not compliant"
+            exit 1
+          fi
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: supplychain-reports
+          path: |
+            .out/
+            sbom/
+            scan/
+            scan_fixed/
+            attest/

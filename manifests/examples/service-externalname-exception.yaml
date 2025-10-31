@@ -1,0 +1,13 @@
+# Purpose: ExternalName Service that relies on a temporary exception (allowed via policy_data.externalName.exceptions).
+apiVersion: v1
+kind: Service
+metadata:
+  name: service-exception
+  namespace: team-platform-staging
+  labels:
+    namespace.io/domain: core-services
+    namespace.io/lifecycle: active
+    namespace.io/owner: platform-team
+spec:
+  type: ExternalName
+  externalName: temp.partner.example.com

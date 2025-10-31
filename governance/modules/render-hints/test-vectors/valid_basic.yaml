@@ -1,0 +1,26 @@
+# Purpose: Valid basic render-hints payload
+name: valid_basic
+valid: true
+payload:
+  type: render-hints
+  i18n:
+    supported_locales: ["en", "zh-TW", "ja"]
+    default_locale: "zh-TW"
+    fallback_locale: "en"
+  ui_hints:
+    theme: "light"
+    form:
+      labelWidth: "120px"
+  validation_rules:
+    - field: "email"
+      rule: "email"
+      message_key: "error.email"
+  conditional_display:
+    - condition: "status.state == 'approved'"
+      show_fields: ["promoted_at", "promoted_by"]
+      hide_actions: ["request-approval"]
+  accessibility:
+    aria_labels_enabled: true
+    keyboard_navigation: true
+    screen_reader_support: true
+    high_contrast_mode: true

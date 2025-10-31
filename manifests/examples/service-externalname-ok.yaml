@@ -1,0 +1,13 @@
+# Purpose: Valid ExternalName Service example (should pass all policy checks).
+apiVersion: v1
+kind: Service
+metadata:
+  name: service-valid-ok
+  namespace: team-platform-prod
+  labels:
+    namespace.io/domain: core-services
+    namespace.io/lifecycle: active
+    owner: platform-team
+spec:
+  type: ExternalName
+  externalName: db.internal.svc.cluster.local

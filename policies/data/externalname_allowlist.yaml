@@ -1,0 +1,14 @@
+# Purpose: Minimal allowlist and rules for Service type=ExternalName.
+# Notes:
+# - Loaded by OPA as data.externalname_allowlist if needed by additional rules.
+# - Keep aligned with policies/data/policy_data.yaml; this file can specialize per environment.
+
+externalName:
+  allowlist:
+    - "db.internal.svc.cluster.local"
+    - "api.partner.example.com"
+  rules:
+    wildcard: false           # 禁止 *.example.com
+    bareDomain: false         # 禁止裸域（無子域）
+    requireFQDN: true         # 必須為完整 FQDN
+    maxLength: 253

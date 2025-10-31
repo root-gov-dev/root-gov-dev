@@ -1,0 +1,10 @@
+# Purpose: Optional environment-specific overrides layered on top of policy-data.yaml (consumed by CI or admission controllers).
+overrides:
+  production:
+    externalName:
+      allowlist:
+        - "db.prod.svc.cluster.local"
+  staging:
+    externalName:
+      allowlist:
+        - "db.staging.svc.cluster.local"

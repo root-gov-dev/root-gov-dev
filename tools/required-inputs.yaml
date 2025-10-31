@@ -1,0 +1,120 @@
+# Purpose: Pinned tool catalog with official download and checksum URLs (Source of Truth).
+# Policy: No fabricated hashes. We verify binaries against upstream checksums files per exact version.
+# If vendor alters asset naming, installer will fail with a clear error; update URLs here accordingly.
+#
+# Fields:
+# - name: tool identifier used by workflows/installer
+# - version: fixed version tag (no v-prefix here unless vendor requires)
+# - kind: binary | archive
+# - urls:
+#     binary: direct URL to binary (for kind=binary)
+#     archive: direct URL to tar.gz/zip (for kind=archive)
+#     checksums: URL to the official checksums file for the same version
+# - expected_filename: optional filename token expected in checksums entries (helps disambiguate)
+# - member_hint: expected binary name inside archive (for extraction)
+# - target_name: final name placed into ./bin
+#
+# NOTE: Versions below are examples chosen for stability. Update as needed; keep immutable over release train.
+#       We intentionally rely on upstream checksum documents rather than embedding hashes here to satisfy "no_fabrication".
+
+tools:
+  - name: kubectl
+    version: "1.29.3"
+    kind: binary
+    urls:
+      binary: "https://dl.k8s.io/release/v1.29.3/bin/linux/amd64/kubectl"
+      checksums: "https://dl.k8s.io/release/v1.29.3/bin/linux/amd64/kubectl.sha256"
+    expected_filename: "kubectl"
+    target_name: "kubectl"
+
+  - name: opa
+    version: "0.63.0"
+    kind: binary
+    urls:
+      binary: "https://github.com/open-policy-agent/opa/releases/download/v0.63.0/opa_linux_amd64"
+      checksums: "https://github.com/open-policy-agent/opa/releases/download/v0.63.0/opa_0.63.0_SHA256SUMS"
+    expected_filename: "opa_linux_amd64"
+    target_name: "opa"
+
+  - name: conftest
+    version: "0.52.0"
+    kind: archive
+    urls:
+      archive: "https://github.com/open-policy-agent/conftest/releases/download/v0.52.0/conftest_0.52.0_Linux_x86_64.tar.gz"
+      checksums: "https://github.com/open-policy-agent/conftest/releases/download/v0.52.0/checksums.txt"
+    expected_filename: "conftest_0.52.0_Linux_x86_64.tar.gz"
+    member_hint: "conftest"
+    target_name: "conftest"
+
+  - name: syft
+    version: "1.6.0"
+    kind: archive
+    urls:
+      archive: "https://github.com/anchore/syft/releases/download/v1.6.0/syft_1.6.0_linux_amd64.tar.gz"
+      checksums: "https://github.com/anchore/syft/releases/download/v1.6.0/syft_1.6.0_checksums.txt"
+    expected_filename: "syft_1.6.0_linux_amd64.tar.gz"
+    member_hint: "syft"
+    target_name: "syft"
+
+  - name: trivy
+    version: "0.53.0"
+    kind: archive
+    urls:
+      archive: "https://github.com/aquasecurity/trivy/releases/download/v0.53.0/trivy_0.53.0_Linux-64bit.tar.gz"
+      checksums: "https://github.com/aquasecurity/trivy/releases/download/v0.53.0/trivy_0.53.0_checksums.txt"
+    expected_filename: "trivy_0.53.0_Linux-64bit.tar.gz"
+    member_hint: "trivy"
+    target_name: "trivy"
+
+  - name: cosign
+    version: "2.2.4"
+    kind: binary
+    urls:
+      binary: "https://github.com/sigstore/cosign/releases/download/v2.2.4/cosign-linux-amd64"
+      checksums: "https://github.com/sigstore/cosign/releases/download/v2.2.4/cosign_2.2.4_checksums.txt"
+    expected_filename: "cosign-linux-amd64"
+    target_name: "cosign"
+
+  - name: kyverno
+    version: "1.12.5"
+    kind: archive
+    urls:
+      archive: "https://github.com/kyverno/kyverno/releases/download/v1.12.5/kyverno-cli_v1.12.5_linux_x86_64.tar.gz"
+      checksums: "https://github.com/kyverno/kyverno/releases/download/v1.12.5/checksums.txt"
+    expected_filename: "kyverno-cli_v1.12.5_linux_x86_64.tar.gz"
+    member_hint: "kyverno"
+    target_name: "kyverno"
+
+  - name: kubescape
+    version: "3.0.10"
+    kind: binary
+    urls:
+      binary: "https://github.com/kubescape/kubescape/releases/download/v3.0.10/kubescape-linux-amd64"
+      checksums: "https://github.com/kubescape/kubescape/releases/download/v3.0.10/checksums.txt"
+    expected_filename: "kubescape-linux-amd64"
+    target_name: "kubescape"
+
+  - name: kube-bench
+    version: "0.7.3"
+    kind: archive
+    urls:
+      archive: "https://github.com/aquasecurity/kube-bench/releases/download/v0.7.3/kube-bench_0.7.3_linux_amd64.tar.gz"
+      checksums: "https://github.com/aquasecurity/kube-bench/releases/download/v0.7.3/checksums.txt"
+    expected_filename: "kube-bench_0.7.3_linux_amd64.tar.gz"
+    member_hint: "kube-bench"
+    target_name: "kube-bench"
+
+# Optional: Python package versions (installed via pip) where binary releases are not ideal.
+python_packages:
+  - name: checkov
+    version: "3.2.0"
+    # For strict reproducibility, prefer using pip --require-hashes with a constraints file committed to repo.
+    # Here we pin version and record evidence (sha3/blake3) after installation.
+
+# Policy inputs (non-executable). Used by CI to render data for policy engines (Conftest/OPA/Kyverno/Gatekeeper).
+policy:
+  externalname:
+    allowed_internal_domains:
+      - "corp.internal"
+      - "svc.cluster.local"
+      - "internal.company"

@@ -1,0 +1,95 @@
+# Purpose: Generate SBOM (Syft), run Trivy scans, optional Cosign, and produce evidence hashes.
+# Upgrades:
+# - ENABLE_SUPPLY_CHAIN=true will download pinned tools from tools/required-inputs.yaml and execute real scans.
+# - Minimal permissions, concurrency, retry, job-level timeout preserved.
+name: sbom-attest-provenance
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main", "master"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sbom-attest-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REPORT_DIR: artifacts/reports
+  ENABLE_SUPPLY_CHAIN: "true"
+
+jobs:
+  supply-chain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Clone repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p repo && cd repo
+          git init
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}"
+          git fetch --depth=1 origin "${GITHUB_SHA}"
+          git checkout --detach "${GITHUB_SHA}"
+      - name: Prepare reports
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          mkdir -p "${REPORT_DIR}" artifacts/tools bin
+      - name: Install PyYAML (for installer)
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check --no-input pyyaml >/dev/null
+      - name: Install Syft/Trivy/Cosign (pinned)
+        id: install
+        shell: bash
+        working-directory: repo
+        env:
+          PATH: ${{ github.workspace }}/repo/bin:/usr/local/bin:/usr/bin:/bin
+        run: |
+          set -euo pipefail
+          python3 scripts/install_tools.py --tools syft,trivy,cosign --out artifacts/tools/install-report.json
+          echo "PATH=$(pwd)/bin:$PATH" >> "$GITHUB_ENV"
+      - name: Syft SBOM (SPDX JSON)
+        if: env.ENABLE_SUPPLY_CHAIN == 'true'
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          syft version | tee "${REPORT_DIR}/syft_version.txt"
+          syft . -o spdx-json > "${REPORT_DIR}/sbom.spdx.json" || { echo "syft failed"; exit 1; }
+      - name: Trivy filesystem scan (SARIF)
+        if: env.ENABLE_SUPPLY_CHAIN == 'true'
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          trivy version | tee "${REPORT_DIR}/trivy_version.txt"
+          trivy fs --scanners vuln,secret,config --format sarif --output "${REPORT_DIR}/trivy.sarif" .
+      - name: Cosign evidence (version)
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          cosign version | tee "${REPORT_DIR}/cosign_version.txt" || echo "cosign not available"
+      - name: Evidence hash
+        shell: bash
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          python3 - << 'PY'
+import os, json, hashlib, glob
+paths = sorted(glob.glob("artifacts/reports/*"))
+out = {}
+for p in paths:
+  with open(p,'rb') as f: out[os.path.basename(p)] = hashlib.sha3_512(f.read()).hexdigest()
+open("artifacts/reports/evidence.sha3.json","w").write(json.dumps(out, indent=2))
+print(json.dumps(out, indent=2))
+PY
+          echo "::notice title=Supply Chain::Reports at artifacts/reports"

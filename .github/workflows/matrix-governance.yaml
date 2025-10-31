@@ -1,0 +1,26 @@
+name: matrix-governance
+on:
+  pull_request:
+    paths:
+      - 'gitops/**'
+      - 'skills/kyverno-bridge/**'
+      - '.github/workflows/matrix-governance.yaml'
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        engine: [argocd, flux]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint manifests
+        run: |
+          pipx install kube-linter || true
+          kube-linter lint gitops || true
+      - name: Validate engine manifests
+        run: |
+          case "${{ matrix.engine }}" in
+            argocd) grep -R "kind: Application" gitops/argocd || exit 1 ;;
+            flux)   grep -R "kind: Kustomization" gitops/flux || exit 1 ;;
+            *) echo "unknown engine"; exit 1 ;;
+          esac

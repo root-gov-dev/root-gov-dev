@@ -1,0 +1,15 @@
+# Purpose: Sample ExternalName Service for validation. Allowed domains controlled via policy-data (corp.internal, svc.cluster.local, internal.company).
+apiVersion: v1
+kind: Service
+metadata:
+  name: team-platform-external
+  labels:
+    namespace.io/team: platform
+    namespace.io/environment: production
+    namespace.io/lifecycle: active
+    namespace.io/managed-by: gitops
+  annotations:
+    description: "ExternalName demo pointing to internal domain"
+spec:
+  type: ExternalName
+  externalName: api.corp.internal
