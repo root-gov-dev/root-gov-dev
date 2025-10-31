@@ -1,0 +1,18 @@
+{
+  "subject": {
+    "name": "replace-with-image-name-or-digest",
+    "digest": "sha256:..."
+  },
+  "predicateType": "cyclonedx",
+  "predicate": {
+    "bom": {
+      "metadata": {
+        "component": {
+          "name": "example",
+          "version": "0.0.0"
+        }
+      },
+      "components": []
+    }
+  }
+}
