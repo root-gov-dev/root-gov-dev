@@ -58,10 +58,11 @@ backup_repo() {
         # Create compressed archive
         if tar -czf "${repo_name}.tar.gz" "${repo_name}.git"; then
             echo -e "${GREEN}✓ Created archive for ${repo_name}${NC}"
-            # Remove the .git directory to save space
+            # Remove the .git directory to save space (only after successful archive)
             rm -rf "${repo_name}.git"
         else
             echo -e "${RED}✗ Failed to create archive for ${repo_name}${NC}"
+            echo -e "${YELLOW}  Keeping .git directory for manual recovery${NC}"
         fi
     else
         echo -e "${RED}✗ Failed to clone ${repo_name}${NC}"
@@ -95,7 +96,7 @@ for repo in "${REPOS[@]}"; do
 done
 
 # Calculate total backup size
-total_size=$(du -sh "$BACKUP_DIR" | cut -f1)
+total_size=$(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1 || echo "unknown")
 
 cat >> "backup_manifest.txt" << EOF
 
