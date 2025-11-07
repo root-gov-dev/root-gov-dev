@@ -1,5 +1,7 @@
 # root-gov-dev
 
+> 🚨 **緊急恢復指南**: 如果您需要恢復已刪除的倉庫（如 `ops-core-root-system`），請參閱 [快速恢復步驟](QUICK_RECOVERY_STEPS.md) | [完整恢復指南（中文）](REPOSITORY_RECOVERY_GUIDE.md) | [Full Recovery Guide (English)](REPOSITORY_RECOVERY_GUIDE_EN.md)
+
 ## 定位與願景
 
 root-gov-dev 是一個面向未來、專為開放式治理與 AI 驅動模組開發而設計的開放式治理模組測試平台。其核心目標為落實「模組治理」理念，推動人工智慧在模組設計、生成、驗證、觀測與演化週期中的全面參與，實現治理科技的自適應、演進與共創。
