@@ -1,0 +1,44 @@
+{
+  "scan_timestamp": "2025-11-15T18:15:30.222978",
+  "total_manifests_scanned": 5,
+  "violations_found": 2,
+  "auto_fixes_applied": 2,
+  "compliance_score": 100.0,
+  "violation_details": [
+    {
+      "type": "security_context",
+      "file": "manifests/examples/compliant.yaml",
+      "manifest_index": 0,
+      "container_index": 0,
+      "setting": "runAsNonRoot",
+      "current_value": null,
+      "recommended_value": true,
+      "risk_level": "high",
+      "remediation_type": "auto",
+      "auto_fixable": true
+    },
+    {
+      "type": "security_context",
+      "file": "manifests/examples/compliant.yaml",
+      "manifest_index": 0,
+      "container_index": 0,
+      "setting": "allowPrivilegeEscalation",
+      "current_value": null,
+      "recommended_value": false,
+      "risk_level": "high",
+      "remediation_type": "auto",
+      "auto_fixable": true
+    }
+  ],
+  "fix_details": [
+    {
+      "success": true,
+      "fix_type": "security_context_update"
+    },
+    {
+      "success": true,
+      "fix_type": "security_context_update"
+    }
+  ],
+  "remaining_violations": []
+}
